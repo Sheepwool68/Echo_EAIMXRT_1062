@@ -1,0 +1,21 @@
+# Host-test build artifacts (compiled locally by host_tests/Makefile)
+host_tests/test_*
+!host_tests/test_*.c
+host_tests/*.o
+host_tests/*.exe
+
+# MCUXpresso / Eclipse project artifacts (if you add the real .cproject/.project later)
+Debug/
+Release/
+*.launch
+.metadata/
+
+# Common editor/OS clutter
+.DS_Store
+*.swp
+*~
+
+# If you later add the real MCUXpresso-generated build output
+*.axf
+*.bin
+*.map
