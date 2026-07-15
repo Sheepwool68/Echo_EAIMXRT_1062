@@ -26,6 +26,7 @@
 #include "bringup_config.h"
 #include "ms_time.h"
 #include "systick_ms_rt1062.h"
+#include "enet_lwip_rt1062.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -1005,10 +1006,14 @@ void app_run_one_iteration(app_context_t *app)
         in, not just "not yet implemented." */
 
 #if APP_ENABLE_TCP
-    /* Drives lwIP's internal timers -- consolidated replacement for the
-     * many scattered tcp_tick(NULL) calls in the original. Ethernet RX
-     * itself is pumped by your board's ENET driver separately (see
-     * tcp_transport_lwip.h's tcp_lwip_poll() doc comment). */
+    /* Was entirely missing until 2026-07-14 -- the "board's ENET
+     * driver" half tcp_lwip_poll()'s own doc comment says must be
+     * pumped separately (drives the actual RX path, ethernetif_input());
+     * tcp_lwip_poll() below only drives lwIP's internal timers
+     * (sys_check_timeouts()) -- consolidated replacement for the many
+     * scattered tcp_tick(NULL) calls in the original. Both are needed
+     * every iteration; order between the two doesn't matter. */
+    enet_lwip_rt1062_poll();
     tcp_lwip_poll();
     process_data_sockets(app, now_ms);
     process_reset_socket(app);

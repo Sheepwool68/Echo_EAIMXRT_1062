@@ -12,14 +12,28 @@
 #include "peripherals.h" /* MCUXpresso Config Tools generated -- LPI2C1_PERIPHERAL */
 #include "fsl_lpi2c.h"
 #include "fsl_common.h"
+#include "systick_ms_rt1062.h"
 #include <stdbool.h>
+
+/* Bus hang guard: if wiring/pull-ups/IRQ routing are wrong, the callback
+ * may never fire at all (neither success nor NAK) -- without this bound
+ * the spin-wait below would hang the whole application forever on the
+ * very first transfer attempted. 10ms is generous for a 100kHz, <=7-byte
+ * transfer. */
+#define LPI2C1_BUS_TIMEOUT_MS  10u
 
 static lpi2c_master_handle_t s_handle;
 static volatile bool s_completion_flag;
 static volatile bool s_nack_flag;
+static volatile bool s_error_flag;
 static lpi2c_master_transfer_t s_xfer;
 
-/* Was lpi2c_master_callback() in your I2C.c -- identical logic. */
+/* Was lpi2c_master_callback() in your I2C.c -- logic now split three ways
+ * instead of two: NAK, genuine success, and any other status (bus error,
+ * arbitration lost, etc.) are no longer lumped together. Previously any
+ * non-NAK status set the same "completed" flag success did, so a real
+ * transfer error was silently reported to the caller as a successful
+ * transfer with whatever was left in the data buffer. */
 static void lpi2c1_bus_callback(LPI2C_Type *base, lpi2c_master_handle_t *handle,
                                  status_t status, void *userData)
 {
@@ -29,12 +43,14 @@ static void lpi2c1_bus_callback(LPI2C_Type *base, lpi2c_master_handle_t *handle,
 
     if (status == kStatus_LPI2C_Nak) {
         s_nack_flag = true;
-    } else {
+    } else if (status == kStatus_Success) {
         s_completion_flag = true;
-        /* Was `PRINTF("Error occured during transfer!")` on a non-success,
-         * non-NAK status -- no debug console wired up at this layer of
-         * this port; the caller already gets a -1 return for this case,
-         * see lpi2c1_bus_transfer() below. */
+    } else {
+        /* Was `PRINTF("Error occured during transfer!")` -- no debug
+         * console wired up at this layer of this port; the caller now
+         * gets a -1 return for this case via s_error_flag below instead
+         * of being told the transfer succeeded. */
+        s_error_flag = true;
     }
 }
 
@@ -73,18 +89,39 @@ int lpi2c1_bus_transfer(uint8_t slave_address, int direction, uint8_t subaddress
     }
 
     /* Was `while ((!g_MasterCompletionFlag) && (!g_MasterNackFlag)) {}` --
-     * identical spin-wait, same caveat as any busy-wait in this port:
+     * same spin-wait shape, same caveat as any busy-wait in this port:
      * blocks this call's caller until the transfer resolves (I2C
      * transactions are short, so this is consistent with every other
      * I2C driver call in this port already being a blocking-from-the-
      * caller's-perspective operation, just via a different underlying
-     * SDK mechanism now). */
-    while (!s_completion_flag && !s_nack_flag) {
-        /* wait */
+     * SDK mechanism now). Bounded by LPI2C1_BUS_TIMEOUT_MS now, unlike
+     * the original -- see the callback comment above on why an unbounded
+     * wait is unsafe here. */
+    {
+        uint32_t start_ms = systick_ms_now();
+        while (!s_completion_flag && !s_nack_flag && !s_error_flag) {
+            if ((systick_ms_now() - start_ms) >= LPI2C1_BUS_TIMEOUT_MS) {
+                /* Standard NXP SDK call to stop the still-in-flight
+                 * transfer and force any pending callback to resolve
+                 * now, before we give up -- otherwise the callback could
+                 * fire later (after this function has already returned)
+                 * and leave a stale flag set for the *next* transfer to
+                 * misread as its own immediate completion. */
+                LPI2C_MasterTransferAbort(LPI2C1_PERIPHERAL, &s_handle);
+                s_completion_flag = false;
+                s_nack_flag = false;
+                s_error_flag = false;
+                return -1;
+            }
+        }
     }
 
     if (s_nack_flag) {
         s_nack_flag = false;
+        return -1;
+    }
+    if (s_error_flag) {
+        s_error_flag = false;
         return -1;
     }
     s_completion_flag = false;

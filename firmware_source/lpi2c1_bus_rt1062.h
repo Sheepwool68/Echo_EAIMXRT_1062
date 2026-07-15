@@ -45,7 +45,8 @@ void lpi2c1_bus_rt1062_init(void);
  * separate functions. direction: 0 = write, 1 = read (matches
  * kLPI2C_Write/kLPI2C_Read without pulling fsl_lpi2c.h's types into
  * this header). Returns 0 on success, -1 on failure (transfer
- * rejected or NACKed).
+ * rejected, NACKed, any other bus error, or timed out after
+ * LPI2C1_BUS_TIMEOUT_MS with no response at all).
  */
 int lpi2c1_bus_transfer(uint8_t slave_address, int direction, uint8_t subaddress,
                          uint8_t *data, size_t data_size);

@@ -39,10 +39,15 @@ I2C.c.
 LPUART5=FTDI USB-serial (reserved, no code yet), LPUART8=UHF RFID reader.
 80MHz clock root.
 
-**LPSPI3** (shared bus, 105.6MHz clock, 500kHz baud, SPI Mode 0):
+**LPSPI3** (shared bus, 105.6MHz clock, 1MHz baud, SPI Mode 2):
 nRF52833 (manual GPIO CS -- `GPIO_AD_B1_12`/GPIO1 pin 28) and GPS
-NEO-M8T (manual GPIO CS -- `GPIO_AD_B0_04`/GPIO1 pin 4). CS is
-deliberately NOT hardware PCS -- reverted from an earlier hardware-PCS
+NEO-M8T (manual GPIO CS -- `GPIO_AD_B0_04`/GPIO1 pin 4). Baud rate and
+SPI mode corrected 2026-07-13 from 500kHz/Mode 0 (unverified Config
+Tools defaults) to 1MHz/Mode 2 (CPOL=1, CPHA=0) per explicit
+confirmation against the original Dynamic C NEOM8T.LIB -- the baud
+figure also matches the NEO-M8 datasheet's 125kB/s max SPI rate
+exactly. CS is deliberately NOT hardware PCS -- reverted from an
+earlier hardware-PCS
 attempt per explicit instruction ("the LPSPI driver only handles one CS
 pin").
 

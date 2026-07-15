@@ -2,9 +2,16 @@
  * genie_transport_rt1062.c
  *
  * ==========================================================================
- * SCAFFOLD -- LPUART instance now CONFIRMED (LPUART2). Not compiled/tested
- * against real hardware here, same caveats as the other *_rt1062.c files
- * in this port.
+ * CONFIRMED WORKING ON REAL HARDWARE, 2026-07-14 (LPUART2, Genie 4D
+ * display) -- built/flashed via the separate real MCUXpresso project
+ * (eaimxrt1062_hello_world) this port develops alongside; splash string
+ * written via genie_write_str() round-tripped correctly (display
+ * detected, ACK received). As integrated into THIS repo's
+ * app_init.c/app_loop.c specifically, still not rebuilt/retested here --
+ * same scaffold-tier caveat as the other *_rt1062.c files, review the
+ * real project's hello_world.c bring-up test if anything behaves
+ * unexpectedly. Touch/event RX (display -> RT1062 direction) not yet
+ * separately confirmed, only TX (RT1062 -> display) so far.
  * ==========================================================================
  *
  * Implements genie_transport_t using LPUART in interrupt-driven RX (ring
@@ -26,7 +33,16 @@
  * LPUART8 (UHF reader). */
 #define GENIE_LPUART_BASE       LPUART2
 #define GENIE_LPUART_IRQn       LPUART2_IRQn
-#define GENIE_LPUART_CLK_FREQ_HZ CLOCK_GetFreq(kCLOCK_Usb1PllClk)
+/* FIXED (2026-07-14, before first hardware test): was
+ * CLOCK_GetFreq(kCLOCK_Usb1PllClk), the same wrong-clock-root bug
+ * already found and fixed in uhf_transport_rt1062.c's
+ * UHF_LPUART_CLK_FREQ_HZ -- would have miscalculated the baud rate
+ * divisor entirely. board/clock_config.c: UART_CLK_ROOT.outFreq = 80MHz,
+ * a single shared root for every LPUART instance (1/2/5/8, confirmed
+ * via clock_config.h's own consumer comment) -- not per-instance PLL
+ * clocks. Caught by inspection before ever running on hardware, unlike
+ * the UHF case which needed a real bring-up failure to surface it. */
+#define GENIE_LPUART_CLK_FREQ_HZ 80000000UL
 
 #define GENIE_RX_RING_SIZE 256u
 

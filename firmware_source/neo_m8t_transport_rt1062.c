@@ -34,6 +34,15 @@
  * BOARD_InitPeripherals() still calls LPSPI_MasterInit() for LPSPI3 (a
  * shared bus) -- this file must NOT also call it. Only CS is manual now,
  * not the bus itself.
+ *
+ * Per-transfer SPI mode switching (matching the nRF52833's own Mode 1)
+ * was tried here and in nrf_spi_transport_rt1062.c on 2026-07-13, but it
+ * broke GPS without actually fixing the nRF (fw_version came back as the
+ * nRF SPIS peripheral's own `.def` default-byte constant, 0xBB, not real
+ * data -- pointing at a readiness/buffer-queuing issue on the nRF side
+ * instead). Reverted back to this file's single static Mode 2, per
+ * instruction, to restore GPS. See nrf_spi_transport_rt1062.c's header
+ * for the full finding.
  */
 
 #include "neo_m8t_transport_rt1062.h"

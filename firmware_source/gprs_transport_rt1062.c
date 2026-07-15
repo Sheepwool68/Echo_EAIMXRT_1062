@@ -150,10 +150,18 @@ static int rt1062_gprs_read(void *ctx, uint8_t *buf, size_t max_len, uint32_t ti
     uint32_t elapsed_ms = 0;
     const uint32_t poll_interval_ms = 1;
 
+    /* BUG FIX (2026-07-13): this loop incremented elapsed_ms without ever
+     * actually waiting -- a pure register increment/compare loop with no
+     * delay completes a few-hundred-iteration timeout in low
+     * microseconds on real hardware, not the intended milliseconds. The
+     * modem never had a realistic chance to reply before this returned.
+     * Confirmed on real hardware: scope showed genuine TX/RX activity on
+     * LPUART1, but this function always reported zero bytes. */
     while (elapsed_ms < timeout_ms) {
         if (c->rx_tail != c->rx_head) {
             break;
         }
+        SDK_DelayAtLeastUs(poll_interval_ms * 1000u, SystemCoreClock);
         elapsed_ms += poll_interval_ms;
     }
 

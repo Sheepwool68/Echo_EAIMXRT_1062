@@ -71,9 +71,16 @@ typedef struct {
 
 /* CS-to-clock setup delay. Original used an empty for(i=0;i<256;i++)
  * loop, whose real-world duration depended on the Rabbit's clock speed
- * and was never characterised in microseconds. 10us is a placeholder;
- * check the nRF52833-side SPI slave setup-time requirement and adjust. */
-#define NRF_SPI_CS_SETUP_DELAY_US 10u
+ * and was never characterised in microseconds. Bumped 2026-07-13 from
+ * the original 10us placeholder to 100us (10x) as a first experiment --
+ * fw_version (0x0E) was reading a constant garbage value (0xDD/221,
+ * expected 9 or 10) with the immediate-transfer sequence confirmed
+ * faithful to the original source, so insufficient CS/SPI-slave
+ * settling time is the next most likely explanation. Still not
+ * confirmed against the nRF52833 firmware's real requirement -- adjust
+ * further (or scope the CS/clock/MISO lines directly) if this doesn't
+ * fix it. */
+#define NRF_SPI_CS_SETUP_DELAY_US 100u
 
 #ifdef __cplusplus
 }

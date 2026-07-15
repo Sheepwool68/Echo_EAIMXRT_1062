@@ -29,6 +29,7 @@
 #include "systick_ms_rt1062.h"
 #include "nrf_spi_protocol.h"
 #include "nrf_spi_transport_rt1062.h"
+#include "neo_m8t_transport_rt1062.h"
 #include "settings_store.h"
 #include "bms_init.h"
 #include "buzzer_rt1062.h"
@@ -36,6 +37,7 @@
 #include "fan_rt1062.h"
 #include "lpi2c1_bus_rt1062.h"
 #include "finish_lynx_protocol.h"
+#include "enet_lwip_rt1062.h"
 #include <string.h>
 
 int app_init(app_context_t *app)
@@ -119,12 +121,48 @@ int app_init(app_context_t *app)
      * get-fw-version call just below will time out and report it. */
     app->nrf_transport = nrf_spi_transport_rt1062_init();
 
+    /* GPS BUS-PRIMING STEP -- found in the original Dynamic C main(),
+     * immediately before comms_NRF(0x0E):
+     *
+     *   CS2_ENABLE; msDelay(1); SPIRead(&randomstr, 20); CS2_DISABLE;
+     *   msDelay(200); comms_NRF(0x0E);
+     *
+     * with the original author's own comment: "seem to have to do comms
+     * with GPS chip on SPI for proper SPI comms to nrf chip" -- confirmed
+     * on real hardware 2026-07-14 to be genuinely required: without this,
+     * fw_version always reads the nRF SPIS peripheral's own idle-default
+     * byte (no real reply ever armed); with it, fw_version reads
+     * correctly. Deliberately does NOT depend on APP_ENABLE_GPS -- the
+     * nRF SPI link needs this regardless of whether the GPS subsystem
+     * itself is separately enabled, so this uses neo_m8t_transport_rt1062_init()'s
+     * raw CS/transfer primitives directly rather than the full GPS
+     * transport/UBX-parsing path (gps_stub.c), which may not be brought
+     * up at all in this build. nRF's own CS is already deasserted by
+     * nrf_spi_transport_rt1062_init() just above, so no separate GPIO
+     * write is needed here to avoid bus contention during this read
+     * (unlike the bring-up test, where this ran before that init call). */
+    {
+        neo_m8t_transport_t gps_prime = neo_m8t_transport_rt1062_init();
+        uint8_t randomstr[20];
+
+        gps_prime.cs_enable(gps_prime.ctx);
+        gps_prime.delay_ms(gps_prime.ctx, 1);
+        gps_prime.transfer(gps_prime.ctx, NULL, 0, randomstr, sizeof(randomstr));
+        gps_prime.cs_disable(gps_prime.ctx);
+        gps_prime.delay_ms(gps_prime.ctx, 200);
+    }
+
     {
         uint8_t fw_version = 0;
         /* Was `comms_NRF(0x0E); sprintf(version_str,...); genieWriteStr(...)` --
          * the GENIE display write is gated separately below; this just
-         * confirms the link is alive. TODO: surface fw_version somewhere
-         * (debug UART print) until APP_ENABLE_DISPLAY is on. */
+         * confirms the link is alive. Read ONCE here and used immediately
+         * -- do not re-query later, since tx_buf[1] on the nRF side is a
+         * shared byte reused for other purposes (battery percent, etc.)
+         * moments after boot; confirmed on real hardware that repeat
+         * queries show unrelated data, not fw_version, within tens of
+         * milliseconds. TODO: surface fw_version somewhere (debug UART
+         * print) until APP_ENABLE_DISPLAY is on. */
         nrf_spi_get_fw_version(&app->nrf_transport, &fw_version);
     }
 
@@ -160,6 +198,16 @@ int app_init(app_context_t *app)
 #endif
 
 #if APP_ENABLE_TCP
+    /* ENET/PHY/lwIP bring-up -- was entirely missing until 2026-07-14
+     * (bringup_config.h's own Stage 2 comment flagged this as "outside
+     * this port's scope" until now). Must run BEFORE any
+     * tcp_lwip_*_open() call below, which all need a working netif to
+     * already exist. Non-blocking -- see enet_lwip_rt1062.h's header
+     * comment; does not wait for link-up or a DHCP lease before
+     * returning. Also populates app->mac_address, used independently by
+     * the UDP discovery responder and GPRS batch sender below. */
+    enet_lwip_rt1062_init(app->mac_address);
+
     /* Was TCPIPOpenSockets() */
     if (tcp_lwip_listener_open(&app->tcp_listener, 23) != 0) {
         return -1;
@@ -231,7 +279,9 @@ int app_init(app_context_t *app)
 #if APP_ENABLE_TCP
     /* Was TCPIPOpenSocket_FinishLynx() -- now real, see
      * finish_lynx_protocol.h/app_loop.c's process_finish_lynx_socket(). */
-    tcp_lwip_listener_open(&app->finish_lynx_listener, FINISH_LYNX_PORT);
+    if (tcp_lwip_listener_open(&app->finish_lynx_listener, FINISH_LYNX_PORT) != 0) {
+        return -1;
+    }
 #endif
 
 #if APP_ENABLE_STORAGE

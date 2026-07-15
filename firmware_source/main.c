@@ -21,6 +21,18 @@
  * file's intent is clear even before those are wired in. */
 extern void BOARD_InitHardware(void);   /* clocks, pins, debug console, etc */
 
+/* From peripherals.h/peripherals.c (MCUXpresso Config Tools generated --
+ * not in this source tree, see INTEGRATION.md). THIS WAS MISSING: every
+ * hardware driver in this port (lpi2c1_bus_rt1062.c, ds3231_rt1062.c,
+ * TIMEPULSE, MP2731/MAX17303) assumed in comments that this had already
+ * run before it touches its peripheral's registers, but nothing ever
+ * actually called it -- LPI2C1's clock/pins were never brought up, so
+ * the first non-blocking I2C transfer (APP_ENABLE_TIME_SYNC) hit
+ * unclocked LPI2C1 registers and HardFaulted. Must run after
+ * BOARD_InitHardware() (clocks must exist first) and before app_init()
+ * (which starts touching LPI2C1 via lpi2c1_bus_rt1062_init()). */
+extern void BOARD_InitPeripherals(void);
+
 static app_context_t g_app; /* static, not a main()-local: this struct is
                                 large (holds every module's state) and
                                 must live for the program's entire runtime,
@@ -29,6 +41,7 @@ static app_context_t g_app; /* static, not a main()-local: this struct is
 int main(void)
 {
     BOARD_InitHardware();
+    BOARD_InitPeripherals();
 
     /* MUST come after BOARD_InitHardware() -- see systick_ms_rt1062.h's
      * ordering note: the 1ms SysTick reload value is computed from

@@ -22,7 +22,13 @@
 /* CONFIRMED: LPUART8, wired to the UHF RFID reader's serial line. */
 #define UHF_LPUART_BASE       LPUART8
 #define UHF_LPUART_IRQn       LPUART8_IRQn
-#define UHF_LPUART_CLK_FREQ_HZ CLOCK_GetFreq(kCLOCK_Usb1PllClk) /* TODO: correct clock root for your config */
+/* FIXED (2026-07-13): was CLOCK_GetFreq(kCLOCK_Usb1PllClk), an
+ * unresolved TODO placeholder that would have miscalculated the baud
+ * rate divisor entirely (wrong reference clock). CONFIRMED from
+ * board/clock_config.c: UART_CLK_ROOT.outFreq = 80MHz, a single shared
+ * clock root (kCLOCK_UartMux/kCLOCK_UartDiv) for ALL LPUART instances,
+ * not per-instance -- same clock LPUART1/LPUART5 use. */
+#define UHF_LPUART_CLK_FREQ_HZ 80000000UL
 
 #define UHF_RX_RING_SIZE 2048u /* generously larger than the original's
                                    1023-byte EINBUFSIZE, since tag-heavy
@@ -128,8 +134,14 @@ static int rt1062_uhf_read(void *ctx, uint8_t *buf, size_t max_len, uint32_t tim
         if (c->rx_tail != c->rx_head) {
             break; /* at least one byte available */
         }
-        /* TODO: replace with a proper delay (SDK_DelayAtLeastUs or an
-         * RTOS vTaskDelay) -- placeholder loop shape only. */
+        /* FIXED (2026-07-13): was a placeholder loop shape with no actual
+         * delay -- elapsed_ms incremented via pure register compare, so a
+         * "timeout_ms" wait completed in low microseconds on real
+         * hardware instead of the intended milliseconds, giving the
+         * reader no realistic chance to reply. Same bug found and fixed
+         * in gprs_transport_rt1062.c's rt1062_gprs_read() via a scope
+         * trace showing real TX/RX activity the driver never captured. */
+        SDK_DelayAtLeastUs(poll_interval_ms * 1000u, SystemCoreClock);
         elapsed_ms += poll_interval_ms;
     }
 

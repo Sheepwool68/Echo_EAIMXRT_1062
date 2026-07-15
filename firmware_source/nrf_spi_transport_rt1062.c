@@ -30,8 +30,30 @@
  * BOARD_InitPeripherals() still calls LPSPI_MasterInit() for LPSPI3 (a
  * shared bus) -- this file must NOT also call it, and must NOT reconfigure
  * the bus's global settings (baud/mode are fixed for both devices on this
- * shared bus, confirmed 500kHz / SPI Mode 0). Only CS is manual now, not
- * the bus itself.
+ * shared bus, corrected 2026-07-13 from an unverified Config Tools
+ * default of 500kHz/Mode 0 to 1MHz/Mode 2, per explicit confirmation
+ * against the original Dynamic C NEOM8T.LIB -- this bus is shared with
+ * the GPS, so the same setting applies to both devices).
+ *
+ * SPI MODE EXPERIMENT, TRIED AND REVERTED 2026-07-13: the nRF52833
+ * firmware's own SPIS config runs NRF_SPIS_MODE_1 (CPOL=0, CPHA=1), a
+ * genuine mismatch against the bus's Mode 2 (CPOL=1, CPHA=0). Added a
+ * per-transfer mode switch (disable LPSPI, rewrite TCR's CPOL/CPHA,
+ * re-enable) here and the mirror-image switch in
+ * neo_m8t_transport_rt1062.c. Result: fw_version changed from a
+ * scrambled 0xDD to a clean 0xBB -- which is exactly the nRF SPIS
+ * config's `.def` byte (the peripheral's own "no real reply queued
+ * yet" default), not real firmware-version data. So Mode 1 likely *is*
+ * electrically correct (we went from scrambled garbage to a real,
+ * recognizable SPIS-defined constant), but something else -- probably
+ * a readiness/queuing sequencing issue, since SPIS requires the nRF app
+ * to pre-arm a TX buffer before each transfer completes, and this is a
+ * single immediate transfer with no ready-line wait (faithful to the
+ * original comms_NRF() 0x0E case) -- is still wrong. Meanwhile this
+ * change broke GPS. Reverted back to the single static bus-wide Mode 2
+ * per instruction, to get GPS working again; the nRF fw_version mystery
+ * is still open, see project memory for the next angle to try (probably
+ * the SPIS buffer-arming/readiness sequencing, not mode).
  */
 
 #include "nrf_spi_transport_rt1062.h"
