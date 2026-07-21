@@ -269,6 +269,19 @@ typedef enum {
     GENIE_TB_TIMEZ
 } genie_trackbar_t;
 
+/* Single-widget-per-form indices, confirmed from Genie2.lib
+ * (`static char GENIE_KNOB_PWR = 0;` / `static char GENIE_SLIDER_DIM = 0;`)
+ * -- there's only ever one Knob (reader power) and one Slider
+ * (brightness/dim) on their respective forms, so unlike the multi-member
+ * enums above these are single-value "enums" of one, not a guess. */
+typedef enum {
+    GENIE_KNOB_PWR = 0
+} genie_knob_t;
+
+typedef enum {
+    GENIE_SLIDER_DIM = 0
+} genie_slider_t;
+
 typedef struct {
     uint8_t cmd;
     uint8_t object;

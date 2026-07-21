@@ -40,7 +40,18 @@ void neo_m8t_configure_timepulse(const neo_m8t_transport_t *t, uint32_t (*now_ms
 
 int neo_m8t_poll_pvt(const neo_m8t_transport_t *t, neo_pvt_t *out_pvt, uint32_t (*now_ms_fn)(void));
 
-int neo_m8t_update_signal_status(const neo_m8t_transport_t *t, uint32_t (*now_ms_fn)(void));
+/*
+ * out_raw_sats/out_status (either may be NULL): the raw numSV count
+ * (pvt.sats, NOT the *7-scaled 0-100 tank value this function returns)
+ * and the same fix-validity byte process_time_sync()'s sync gate uses
+ * (pvt.status -- requires fixType>0 AND gnssFixOK, NOT just PPS/time
+ * validity -- see ubx_parse_nav_pvt()'s own comment on the
+ * operator-precedence quirk this faithfully preserves from the
+ * original). Added 2026-07-16 so callers can surface the actual
+ * satellite count/fix status for bring-up diagnostics, independent of
+ * the scaled tank percentage. */
+int neo_m8t_update_signal_status(const neo_m8t_transport_t *t, uint32_t (*now_ms_fn)(void),
+                                  int *out_raw_sats, int *out_status);
 
 int gps_sync_time_from_fix_impl(const neo_m8t_transport_t *t, rtc_datetime_t *out_time,
                                  int time_zone_hours, int add30,

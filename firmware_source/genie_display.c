@@ -495,9 +495,9 @@ int genie_current_form(const genie_display_t *g)
     return g->current_form;
 }
 
-void genie_activate_form(genie_display_t *g, uint8_t form)
+int genie_activate_form(genie_display_t *g, uint8_t form)
 {
-    genie_write_object(g, GENIE_OBJ_FORM, form, 0);
+    return genie_write_object(g, GENIE_OBJ_FORM, form, 0);
 }
 
 void genie_recover(genie_display_t *g, uint8_t pulses)

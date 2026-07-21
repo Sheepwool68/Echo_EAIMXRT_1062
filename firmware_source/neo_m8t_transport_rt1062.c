@@ -64,6 +64,14 @@
 #define NEO_CS_GPIO             GPIO1
 #define NEO_CS_PIN              4u
 
+/* nRF52833's own CS pin (GPIO_AD_B1_12 = GPIO1 pin 28, matching
+ * nrf_spi_transport_rt1062.c's NRF_CS_GPIO/PIN -- duplicated here
+ * rather than shared across files, same as NEO_CS_GPIO/PIN's own
+ * pattern). Referenced ONLY to deassert it below -- this file must
+ * never assert it (that's nrf_spi_transport_rt1062.c's job). */
+#define NRF_SHARED_BUS_CS_GPIO  GPIO1
+#define NRF_SHARED_BUS_CS_PIN   28u
+
 /* PPS pin definitions removed from here -- GPIO1_PPS_PORT/PIN and the
  * whole init/interrupt/callback setup now live in the MCUXpresso
  * Config Tools-generated peripherals.h/peripherals.c (GPIO1_PPS_handle
@@ -215,6 +223,33 @@ neo_m8t_transport_t neo_m8t_transport_rt1062_init(void)
     {
         gpio_pin_config_t cs_config = {kGPIO_DigitalOutput, 1, kGPIO_NoIntmode};
         GPIO_PinInit(NEO_CS_GPIO, NEO_CS_PIN, &cs_config);
+    }
+
+    /* CONFIRMED real bug, found and fixed once already during the
+     * 2026-07-13/14 standalone GPS bring-up (see project memory,
+     * project_gps_spi_bringup.md, "shared-bus CS contention with the
+     * nRF52833") but never ported into this actual init function --
+     * added 2026-07-16 after PPS was confirmed toggling (module alive,
+     * has time) while EVERY UBX message (not just PVT polls) still
+     * failed to get ACKed through the real app_init() flow, which only
+     * reproduces with APP_ENABLE_NRF_SPI off. Root cause: `pin_mux.c`'s
+     * BOARD_InitPins() leaves the nRF52833's own CS pin (GPIO1 pin 28)
+     * LOW (asserted/selected) by default at boot. Whenever
+     * nrf_spi_transport_rt1062_init() also runs (APP_ENABLE_NRF_SPI on)
+     * it deasserts that pin itself as part of its own init -- but with
+     * that flag off, nothing ever does, so the nRF stays selected on
+     * this SHARED LPSPI3 bus for the entire session and drives MISO
+     * simultaneously with every GPS transfer, corrupting the signal
+     * (looks exactly like "GPS never gets a reply," not like garbled
+     * data, because the corruption prevents ever finding a valid 0xB5
+     * 0x62 sync pair at all). Deasserting it here is safe and correct
+     * regardless of APP_ENABLE_NRF_SPI's state -- if that flag is ALSO
+     * on, this just duplicates (harmlessly) what
+     * nrf_spi_transport_rt1062_init() already does; if it's off, this
+     * is now the only place that does it. */
+    {
+        gpio_pin_config_t nrf_cs_config = {kGPIO_DigitalOutput, 1, kGPIO_NoIntmode};
+        GPIO_PinInit(NRF_SHARED_BUS_CS_GPIO, NRF_SHARED_BUS_CS_PIN, &nrf_cs_config);
     }
 
     /* PPS pin init/interrupt-enable/callback-install is no longer done

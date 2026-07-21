@@ -39,6 +39,21 @@ typedef struct {
     int open;
     uint64_t max_size_bytes; /* log rotation threshold, drives percent_full */
     char path[64];
+
+    /* SEPARATE handle for rewind reads, added 2026-07-20 so a rewind can
+     * stay open across many main-loop iterations (a resumable batch
+     * stream, not one blocking call) WHILE live records keep appending
+     * to the same file via `file`/`open` above. littlefs supports
+     * multiple concurrently-open handles on the same file/volume --
+     * safe here because this log is append-only (existing bytes never
+     * change, only new ones get added past the end), so a paused
+     * rewind's file position stays valid no matter what gets appended
+     * underneath it in the meantime. Before this, `nand_log_open_for_append()`
+     * and `nand_log_open_for_read()` shared this single `file`/`open`
+     * pair, so a rewind and a live append genuinely could not coexist --
+     * whichever tried to open second got an outright -1 failure. */
+    lfs_file_t rewind_file;
+    int rewind_open;
 } nand_log_t;
 
 /*
@@ -88,6 +103,21 @@ int nand_log_seek_to_record(nand_log_t *log, uint64_t record_index);
  * records"), negative on I/O error.
  */
 int nand_log_read_next_record(nand_log_t *log, nrf_record_t *out);
+
+/* ------------------------------------------------------------------ */
+/* Rewind-dedicated handle -- added 2026-07-20, see nand_log_t's own    */
+/* field comment for why this is separate from open/file/read/close    */
+/* above. Same contracts as their non-rewind counterparts, just        */
+/* operating on `rewind_file`/`rewind_open` instead of `file`/`open`,  */
+/* so a rewind can stay open across many process_rewind() calls while  */
+/* live appends keep using the other handle undisturbed.               */
+/* ------------------------------------------------------------------ */
+
+int nand_log_rewind_open(nand_log_t *log);
+int nand_log_rewind_close(nand_log_t *log);
+int nand_log_rewind_binary_search(nand_log_t *log, uint32_t start_value,
+                                   rewind_type_t rewind_type, uint32_t *out_record_no);
+int nand_log_rewind_read_next_record(nand_log_t *log, nrf_record_t *out);
 
 #ifdef __cplusplus
 }

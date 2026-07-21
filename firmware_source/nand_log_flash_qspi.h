@@ -2,6 +2,19 @@
  * nand_log_flash_qspi.h
  *
  * ==========================================================================
+ * SUPERSEDED, 2026-07-14 -- app_init.c's storage stage now uses
+ * lfs_mflash.c/mflash_drv.c instead (NXP's own driver, adapted from the
+ * real EA SDK's littlefs_shell example, CONFIRMED WORKING on real
+ * hardware -- full mount/format/write/read-back round trip). That
+ * driver targets the exact same physical chip this file was written
+ * for; the difference was only ever which software drove it. This file
+ * is kept in the tree (not deleted) since its FlexSPI-port research and
+ * the MCUboot-aware flash_offset design intent (see below) may still be
+ * useful once MCUboot partitioning actually exists -- but nothing
+ * currently calls into it. See project memory for the fuller
+ * comparison of the two.
+ * ==========================================================================
+ *
  * CONFIRMED CHIP: Embedded Artists iMX RT1062 OEM board (Rev C1,
  * EAC00428) ships with an ISSI IS25WP128 -- 128Mbit/16MByte QuadSPI NOR,
  * 256-byte pages, uniform 4/32/64KB erase blocks, standard JEDEC-compatible

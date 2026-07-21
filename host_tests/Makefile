@@ -54,8 +54,10 @@ TESTS := \
 
 test_rfid_logic_DEPS          := rfid_logic.c
 test_nrf_spi_protocol_DEPS    := nrf_spi_protocol.c
+test_nrf_spi_protocol_EXTRA   := test_stubs/debug_console_stub.c
 test_pc_protocol_DEPS         := pc_protocol.c
 test_tcp_session_DEPS         := pc_protocol.c tcp_session.c
+test_tcp_session_EXTRA        := test_stubs/debug_console_stub.c
 test_udp_discovery_DEPS       := pc_protocol.c udp_discovery.c
 test_civil_time_DEPS          := civil_time.c
 test_rtc_time_DEPS            := civil_time.c rtc_time.c
@@ -66,6 +68,7 @@ test_uhf_chip_array_DEPS      := uhf_chip_array.c
 test_uhf_packet_parser_DEPS   := uhf_crc.c uhf_packet_parser.c
 test_uhf_commands_DEPS        := uhf_crc.c uhf_commands.c
 test_uhf_reader_DEPS          := uhf_crc.c uhf_commands.c uhf_packet_parser.c uhf_reader.c
+test_uhf_reader_EXTRA         := test_stubs/debug_console_stub.c
 test_gprs_records_DEPS        := gprs_records.c
 test_gprs_config_record_DEPS  := gprs_config_record.c
 test_gprs_response_parser_DEPS:= gprs_response_parser.c
@@ -83,6 +86,7 @@ test_genie_protocol_DEPS        := genie_protocol.c
 test_genie_display_DEPS         := genie_protocol.c genie_display.c ms_time.c
 test_neo_m8t_protocol_DEPS       := neo_m8t_protocol.c
 test_neo_m8t_reader_DEPS         := neo_m8t_protocol.c neo_m8t_reader.c ms_time.c civil_time.c rtc_time.c
+test_neo_m8t_reader_EXTRA        := test_stubs/debug_console_stub.c
 test_finish_lynx_protocol_DEPS   := finish_lynx_protocol.c civil_time.c
 
 test: $(TESTS)
@@ -101,7 +105,7 @@ test: $(TESTS)
 	test $$fail -eq 0
 
 define BUILD_RULE
-$(1): $(1).c $$(addprefix $$(SRC)/,$$($(1)_DEPS))
+$(1): $(1).c $$(addprefix $$(SRC)/,$$($(1)_DEPS)) $$($(1)_EXTRA)
 	$$(CC) $$(CFLAGS) -o $$@ $$^ $$(LDLIBS)
 endef
 $(foreach t,$(TESTS),$(eval $(call BUILD_RULE,$(t))))

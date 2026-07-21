@@ -16,11 +16,26 @@
  *     not the actual logic -- the surrounding if/else branch purpose
  *     is what confirms which is which, not the comment text).
  *   READER_PWR = GPIO_SD_B0_05 = GPIO3 pin 17, ACTIVE HIGH
- *     (write 1 = reader ON, write 0 = reader OFF).
+ *     (write 1 = reader ON, write 0 = reader OFF). CONFIRMED, per
+ *     explicit clarification 2026-07-17: this switches the UHF reader
+ *     MODULE's power supply ON/OFF only -- it has no relationship to
+ *     antenna detection (uhf_reader_set_antennae()'s DC-continuity/
+ *     return-loss checks, done entirely over the LPUART8 protocol link
+ *     once the module already has power) on any board, current or
+ *     future. Noted explicitly so the two don't get conflated just
+ *     because they're both "about the UHF reader."
  *
- * Both pins move together on every real on/off transition -- use
+ * Both pins moved together on every real on/off transition -- use
  * reader_power_set() below for that, not the two per-pin primitives
- * separately, to avoid ever leaving them desynced.
+ * separately -- UNTIL 2026-07-17: on this particular board, READER_PWR
+ * is now repurposed to drive the button LED instead (see
+ * button_led_rt1062.c, which calls reader_pwr_set() directly, entirely
+ * independent of reader_shutdown_set()/reader_power_set()) -- this
+ * board has no real reader-power-control circuit connected to that pin
+ * anyway. reader_power_set() below now only writes READER_SHUTDOWN. A
+ * future board WITH real reader power control would need
+ * reader_power_set() restored to writing both pins together AND the
+ * LED moved off READER_PWR to a different pin.
  */
 
 #ifndef READER_SHUTDOWN_RT1062_H
@@ -32,15 +47,19 @@ extern "C" {
 
 void reader_shutdown_rt1062_init(void);
 
-/* Per-pin primitives -- prefer reader_power_set() below for normal
- * use; these are exposed in case you ever genuinely need independent
- * control, but per your instruction both pins should move together. */
+/* Per-pin primitives. reader_shutdown_set() is used both directly (see
+ * below) and via reader_power_set(); reader_pwr_set() is now called
+ * directly ONLY by button_led_rt1062.c on this board (see this file's
+ * own header comment) -- do not also call it from anywhere doing real
+ * reader-power-control, since reader_power_set() no longer includes
+ * it. */
 void reader_shutdown_set(int enable); /* active low: enable=1 drives pin low */
 void reader_pwr_set(int enable);      /* active high: enable=1 drives pin high */
 
 /* Was the combined PB4 (+ READER_PWR) write inside the GENIE_SYSTEM
- * handler. enable=1 turns the reader fully on (SHUTDOWN low, PWR
- * high); enable=0 turns it fully off (SHUTDOWN high, PWR low). This
+ * handler. CHANGED 2026-07-17 (see this file's header comment): now
+ * only writes READER_SHUTDOWN -- enable=1 drives it low (was: "reader
+ * fully on"), enable=0 drives it high (was: "reader fully off"). This
  * is what app_uhf_active_mode_toggle() calls. */
 void reader_power_set(int enable);
 

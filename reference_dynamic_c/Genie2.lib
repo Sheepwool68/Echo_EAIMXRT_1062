@@ -1,0 +1,1457 @@
+/*******************************************************************************
+GENIE.LIB
+   Copyright (c) RFID Timing 2020
+
+DESCRIPTION:
+   Library for interfacing with the 4D Systems touchscreen using the Genie Visi
+   model.
+
+
+   The functions are:
+      open_4D
+      genieWriteContrast
+      genieEventProcess
+      genieCheckResponse
+      genieWriteObject
+      genieWriteStr
+
+SUPPORT LIB'S:
+   None
+*******************************************************************************/
+
+/*** BeginHeader */
+
+//#define DEBUG_RST 1
+
+#define CINBUFSIZE 63
+#define COUTBUFSIZE 63
+
+#ifndef lowByte
+#define lowByte(x) ((char)((x) & 0xFF))
+#endif
+
+#ifndef highByte
+#define highByte(x) ((char)(((x) >> 8) & 0xFF))
+#endif
+
+
+// Based on Arduino Library v1.4.5 [04-08-2017]
+#define GENIE_VERSION		"v1.0.2 - 07-08-2020" // DD-MM-YYYY
+
+// Do not modify current values. Recommended settings.
+#define DISPLAY_TIMEOUT         2000
+#define AUTO_PING_CYCLE         1250
+
+// Structure to store replys returned from a display
+#define GENIE_FRAME_SIZE        6
+
+#define MAX_GENIE_EVENTS    	16    // MUST be a power of 2
+
+#define GENIE_ACK               0x06
+#define GENIE_NAK               0x15
+#define GENIE_PING              0x80
+#define GENIE_READY             0x81
+#define GENIE_DISCONNECTED      0x82
+
+//Genie constants
+typedef enum {
+	GENIE_READ_OBJ,
+	GENIE_WRITE_OBJ,
+	GENIE_WRITE_STR,
+	GENIE_WRITE_STRU,
+	GENIE_WRITE_CONTRAST,
+	GENIE_REPORT_OBJ,
+	GENIE_REPORT_EVENT = 7,
+	GENIEM_WRITE_BYTES,
+	GENIEM_WRITE_DBYTES,
+	GENIEM_REPORT_BYTES,
+	GENIEM_REPORT_DBYTES,
+	GENIE_WRITE_INH_LABEL
+} GenieCommand;
+
+typedef enum {
+	GENIE_OBJ_DIPSW,
+	GENIE_OBJ_KNOB,
+	GENIE_OBJ_ROCKERSW,
+	GENIE_OBJ_ROTARYSW,
+	GENIE_OBJ_SLIDER,
+	GENIE_OBJ_TRACKBAR,
+	GENIE_OBJ_WINBUTTON,
+	GENIE_OBJ_ANGULAR_METER,
+	GENIE_OBJ_COOL_GAUGE,
+	GENIE_OBJ_CUSTOM_DIGITS,
+	GENIE_OBJ_FORM,
+	GENIE_OBJ_GAUGE,
+	GENIE_OBJ_IMAGE,
+	GENIE_OBJ_KEYBOARD,
+	GENIE_OBJ_LED,
+	GENIE_OBJ_LED_DIGITS,
+	GENIE_OBJ_METER,
+	GENIE_OBJ_STRINGS,
+	GENIE_OBJ_THERMOMETER,
+	GENIE_OBJ_USER_LED,
+	GENIE_OBJ_VIDEO,
+	GENIE_OBJ_STATIC_TEXT,
+	GENIE_OBJ_SOUND,
+	GENIE_OBJ_TIMER,
+	GENIE_OBJ_SPECTRUM,
+	GENIE_OBJ_SCOPE,
+	GENIE_OBJ_TANK,
+	GENIE_OBJ_USERIMAGES,
+	GENIE_OBJ_PINOUTPUT,
+	GENIE_OBJ_PININPUT,
+	GENIE_OBJ_4DBUTTON,
+	GENIE_OBJ_ANIBUTTON,
+	GENIE_OBJ_COLORPICKER,
+	GENIE_OBJ_USERBUTTON,
+	GENIE_OBJ_MAGIC_RESERVED,
+	GENIE_OBJ_SMARTGAUGE,
+	GENIE_OBJ_SMARTSLIDER,
+	GENIE_OBJ_SMARTKNOB,
+	GENIE_OBJ_ILED_DIGITS_H,
+	GENIE_OBJ_IANGULAR_METER,
+	GENIE_OBJ_IGAUGE,
+	GENIE_OBJ_ILABELB,
+	GENIE_OBJ_IUSER_GAUGE,
+	GENIE_OBJ_IMEDIA_GAUGE,
+	GENIE_OBJ_IMEDIA_THERMOMETER,
+	GENIE_OBJ_ILED,
+	GENIE_OBJ_IMEDIA_LED,
+	GENIE_OBJ_ILED_DIGITS_L,
+	GENIE_OBJ_ILED_DIGITS,
+	GENIE_OBJ_INEEDLE,
+	GENIE_OBJ_IRULER,
+	GENIE_OBJ_ILED_DIGIT,
+	GENIE_OBJ_IBUTTOND,
+	GENIE_OBJ_IBUTTONE,
+	GENIE_OBJ_IMEDIA_BUTTON,
+	GENIE_OBJ_ITOGGLE_INPUT,
+	GENIE_OBJ_IDIAL,
+	GENIE_OBJ_IMEDIA_ROTARY,
+	GENIE_OBJ_IROTARY_INPUT,
+	GENIE_OBJ_ISWITCH,
+	GENIE_OBJ_ISWITCHB,
+	GENIE_OBJ_ISLIDERE,
+	GENIE_OBJ_IMEDIA_SLIDER,
+	GENIE_OBJ_ISLIDERH,
+	GENIE_OBJ_ISLIDERG,
+	GENIE_OBJ_ISLIDERF,
+	GENIE_OBJ_ISLIDERD,
+	GENIE_OBJ_ISLIDERC,
+	GENIE_OBJ_ILINEAR_INPUT
+} GenieObject;
+
+//Forms
+typedef enum {
+	GENIE_FORM_SPLASHSCREEN,
+   GENIE_FORM_MAIN,
+   GENIE_FORM_SETTINGS,
+   GENIE_FORM_NETWORKING,
+   GENIE_FORM_RFID,
+   GENIE_FORM_KEYBOARD,
+   GENIE_FORM_KEYPAD,
+   GENIE_FORM_DATA,
+   GENIE_FORM_TIME,
+   GENIE_FORM_SLEEP,
+   GENIE_FORM_OTHER,
+   GENIE_FORM_UHF,
+   GENIE_FORM_ANT
+};
+
+
+
+//4D buttons
+typedef enum {
+	GENIE_SYSTEM,
+   GENIE_RFID,
+   GENIE_NET,
+   GENIE_DATA,
+   GENIE_TIME,
+   GENIE_DHCP,
+   GENIE_REMOTE,
+   GENIE_GPS,
+   GENIE_ADD30,
+   GENIE_PLAYBACK,
+   GENIE_SLEEP,
+   GENIE_OTHER,
+   GENIE_BUZZER,
+   GENIE_DIM,
+   GENIE_TRIGGER,
+   GENIE_UHF_MODE,
+   GENIE_UHF_READ
+};
+
+//WinButtons
+typedef enum {
+	GENIE_BUTTON_SETTINGS, //Main screen
+   GENIE_BUTTON_RESET,
+   GENIE_BUTTON_MAIN,
+   GENIE_BUTTON_BACK,
+   GENIE_BUTTON_SETLAN,
+   GENIE_BUTTON_SETAPN,
+   GENIE_BUTTON_SETREMOTE_IP,
+   GENIE_BUTTON_SETREMOTE_PORT,
+   GENIE_BUTTON_BACK2,
+   GENIE_BUTTON_BACK3,
+   GENIE_BUTTON_BACK_OTHER,
+   GENIE_BUTTON_BACK4,
+   GENIE_BUTTON_CLEAR_LOG,
+   GENIE_BUTTON_UPDATE_FIRMWARE,
+   GENIE_BUTTON_CANCEL,
+   GENIE_BUTTON_CODE,
+   GENIE_BUTTON_CHECK,
+   GENIE_BUTTON_SETGATEWAY_IP,
+   GENIE_BUTTON_UHF_CHANGE,
+   GENIE_BUTTON_BACK5,
+   GENIE_BUTTON_BACK6,
+   GENIE_BUTTON_CHECK_RL,
+   GENIE_BUTTON_DIAGNOSTICS
+
+};
+
+
+//String messages
+typedef enum {
+	GENIE_SPLASH_STR,
+   GENIE_TXPDR_STR,
+   GENIE_LAN_STR,
+   GENIE_REMOTE_STR,
+   GENIE_PORT_STR,
+   GENIE_APN_STR,
+   GENIE_KB_STR,
+   GENIE_KP_STR,
+   GENIE_RECORDS_STR,
+   GENIE_DATE_STR,
+   GENIE_CODE_STR,
+   GENIE_SIGN_STR,
+   GENIE_LAST_READ_STR,
+   GENIE_INSTFW_STR,
+   GENIE_CURRFW_STR,
+   GENIE_TXPDR_BAT_STR,
+   GENIE_FW_PROGRESS_STR,
+   GENIE_MAC_STR,
+   GENIE_GATEWAYIP_STR,
+   DUNNO,
+   DUNNO2,
+   GENIE_SYSTEM_STR,
+   GENIE_LED1_STR,
+   GENIE_LED2_STR,
+   GENIE_LED3_STR,
+   GENIE_LED4_STR,
+   GENIE_BAT_OR_STATUS_STR,
+   DUNNO3,
+   GENIE_COUNTRY_STR,
+   GENIE_FREQ_STR
+
+
+};
+
+//Gauges
+typedef enum {
+	GENIE_GAUGE_PWR,
+   GENIE_GAUGE_BAT,
+   GENIE_GAUGE_FILE,
+   GENIE_GAUGE_ANT1,
+   GENIE_GAUGE_ANT2,
+   GENIE_GAUGE_ANT3,
+   GENIE_GAUGE_ANT4
+};
+
+//Keyboards
+typedef enum {
+	GENIE_KEYBOARD,
+   GENIE_KEYPAD
+};
+
+//LED's
+typedef enum {
+	GENIE_LED_PPS,
+   GENIE_LED_GSOC,
+   GENIE_LED_LSOC,
+   GENIE_LED_LOOP,
+   GENIE_LED_PBACK,
+   GENIE_LED_BTON,
+   GENIE_LED_LPM
+};
+
+//Tank's
+typedef enum {
+	GENIE_TANK_4G,
+   GENIE_TANK_GPS
+};
+
+//LED Digits
+typedef enum {
+	GENIE_DLED_READS,
+   GENIE_DLED_BAT,
+   GENIE_DLED_POWER,
+   GENIE_DLED_HOUR,
+   GENIE_DLED_MIN,
+   GENIE_DLED_SEC,
+   GENIE_DLED_POWER_CHANGE,
+   GENIE_DLED_ID,
+   GENIE_DLED_BT_TIME_ON,
+   GENIE_DLED_ID1,
+   GENIE_DLED_TIMEZONE,
+   GENIE_DLED_ID2
+};
+
+//Trackbars
+typedef enum {
+	GENIE_TB_ID,
+   GENIE_TB_BT_ON,
+   GENIE_TB_ID2,
+   GENIE_TB_TIMEZ,
+};
+
+//Knob
+static char GENIE_KNOB_PWR = 0;
+static char GENIE_USER_BUTTON = 1; //used to wake main screen in low contrast mode
+
+//Slider
+static char GENIE_SLIDER_DIM = 0;
+
+
+
+//Globals
+
+
+typedef struct {
+    char        cmd;
+    char        object;
+    char        index;
+    char        data_msb;
+    char        data_lsb;
+} FrameReportObj;
+
+typedef struct {
+    char         cmd;
+    char         index;
+    char         length;
+} MagicReportHeader;
+
+typedef union {
+    float floatValue;
+    long longValue;
+    unsigned long ulongValue;
+    int wordValue[2];
+} FloatLongFrame;
+
+/////////////////////////////////////////////////////////////////////
+// The Genie frame definition
+//
+// The union allows the data to be referenced as an array of char
+// or a structure of type FrameReportObj, eg
+//
+//    genieFrame f;
+//    f.bytes[4];
+//    f.reportObject.data_lsb
+//
+//    both methods get the same byte
+//
+typedef union {
+    char             bytes[GENIE_FRAME_SIZE];
+    FrameReportObj      reportObject;
+} genieFrame;
+
+typedef struct {
+    genieFrame    	frames[MAX_GENIE_EVENTS];
+    char        	rd_index;
+    char        	wr_index;
+    char        	n_events;
+} EventQueueStruct;
+
+
+typedef void        (*UserEventHandlerPtr) (void);
+typedef void        (*UserMagicByteHandlerPtr) (char, char);
+typedef void        (*UserMagicDByteHandlerPtr) (char, char);
+//typedef void		(*UserDebuggerHandlerPtr) (char *);
+typedef void 		(*UserDebuggerHandlerPtr) (const char *, ...);
+
+EventQueueStruct EventQueue;
+
+UserEventHandlerPtr UserHandler;
+UserMagicByteHandlerPtr UserMagicByteHandler;
+UserMagicDByteHandlerPtr UserMagicDByteHandler;
+UserDebuggerHandlerPtr UserDebuggerHandler;
+
+// used internally by the library, do not modify!
+volatile char     pendingACK; // prevent userhandler if waiting for ACK, and end recursion.
+volatile char     pingRequest; // used internally by the library, do not touch.
+volatile char  recover_pulse; // pulse for offline autoping, use genie.recover(x) to change it from sketch.
+char     autoPing; // used internally by the library, do not touch.
+volatile unsigned int GENIE_CMD_TIMEOUT; // force disconnection trigger if ACK times out
+volatile unsigned long autoPingTimer; // timer for autoPinger() function
+volatile char     displayDetected; // display is online/offline state
+volatile unsigned long displayDetectTimer; // timer for lcd to be aware if connected
+volatile int  currentForm; // current form thats loaded
+volatile char  nakInj; // nak injection counter
+volatile char  badByteCounter; // used for disconnection/debugging purposes
+volatile unsigned long delayedCycles; // session protection if latency in user code
+volatile unsigned long display_uptime; // uptime of display
+volatile unsigned long ping_spacer; // prevent flooding the uart during recovery. non-blocking.
+volatile char     genieStart;
+
+char  last_winbutton;
+char last_genieform;
+
+// Public Functions
+char 		genieBegin();
+
+char     genieReadObject(char object, char index);
+unsigned int    genieWriteObject(char object, char index, unsigned int data);
+int round_up_to_max_pow10(int n);
+unsigned int  genieWriteShortToIntLedDigits(char index, int data);
+unsigned int   genieWriteFloatToIntLedDigits(char index, float data);
+unsigned int    genieWriteLongToIntLedDigits(char index, long data);
+char     genieWriteContrast(char value);
+unsigned int    genieWriteStr(char index, char *string);
+unsigned int    genieWriteStrU(char index, unsigned int *string);
+int	genieWriteInhLabelDefault(char index);
+int    genieWriteInhLabel(char index, char *string);
+char        genieEventIs(genieFrame * e, char cmd, char object, char index);
+unsigned int    genieGetEventData(genieFrame * e);
+char        genieDequeueEvent(genieFrame * buff);
+
+char		genieDoEvents();
+void        genieAttachEventHandler(UserEventHandlerPtr handler);
+void        genieAttachMagicByteReader(UserMagicByteHandlerPtr handler);
+void        genieAttachMagicDoubleByteReader(UserMagicDByteHandlerPtr handler);
+void 		genieAttachDebugger(UserDebuggerHandlerPtr handler);
+char 		genieOnline();
+unsigned long	genieUptime();
+char		genieCurrentForm();
+void		genieActivateForm(char form);
+void		genieRecover(char pulses);
+char		genieTimeout(unsigned int value);
+char		geniePing();
+unsigned int	genieEnableAutoPing(unsigned int interval);
+
+// Genie Magic functions (ViSi-Genie Pro Only)
+
+#define		genieWriteMagicBytes(index, bytes, len)		_genieWriteMagicBytes(index, bytes, len, 0);
+int  _genieWriteMagicBytes(unsigned int index, char *bytes, unsigned intlen, char report);
+#define		genieWriteMagicDBytes(index, shorts, len)	_genieWriteMagicDBytes(index, shorts, len, 0);
+int    _genieWriteMagicDBytes(unsigned int index, unsigned int *shorts, unsigned int len, char report);
+
+char     genieGetNextByte(void);
+int    genieGetNextDoubleByte(void);
+
+
+// Private Functions
+
+char     genieEnqueueEvent(char * data);
+
+
+
+/*** EndHeader */
+
+
+
+/*** BeginHeader open_4D */
+void open_4D();
+/*** EndHeader */
+
+//open serial port to 4D display
+void open_4D()
+{
+
+   serCopen(115200);    //port for LCD
+	serCrdFlush();
+   serCwrFlush();
+
+   //sprintf(buf, "SDN$,N=RFIDTIMING Joey %%M4:%%M5:%%M6\n\r")
+
+}
+
+
+
+// Public Functions
+
+
+/*** BeginHeader genieBegin */
+char genieBegin();
+/*** EndHeader */
+
+char genieBegin() {
+
+	unsigned long timeout_start;
+
+	pendingACK = 0;
+	pingRequest = 0;
+	recover_pulse = 50;
+	autoPing = 0;
+	GENIE_CMD_TIMEOUT = 1250;
+	autoPingTimer = 0;
+	displayDetected = 0;
+	displayDetectTimer = 0;
+	currentForm = -1;
+	nakInj = 0;
+	badByteCounter = 0;
+	delayedCycles = 0;
+	display_uptime = 0;
+	ping_spacer;
+	genieStart = 1;
+
+	UserHandler = NULL;
+	UserMagicByteHandler = NULL;
+	UserMagicDByteHandler = NULL;
+	UserDebuggerHandler = NULL;
+   memset(&EventQueue, 0, sizeof(EventQueue));       //Had to do this as pre-existing random data fucks event count
+
+	display_uptime = MS_TIMER; // start uptime timer (ms)
+	genieStart = 1; // start form request on startup
+	genieReadObject(GENIE_OBJ_FORM, (char)0x00); // send form request
+	timeout_start = MS_TIMER; // timeout timer
+	while ( MS_TIMER - timeout_start <= 150 ) { // blocking loop, releases after 150ms to timeout, or sooner if display's detected.
+		if ( genieDoEvents() == GENIE_REPORT_OBJ && !genieStart ) return 1; // form is updated.
+	}
+	displayDetected = 0;
+	return 0; // timeout occurred, status offline.
+}
+
+
+
+
+
+
+/*** BeginHeader genieReadObject */
+char genieReadObject(char object, char index);
+/*** EndHeader */
+
+char genieReadObject(char object, char index) {
+
+	char checksum;
+
+	if ( !displayDetected )
+		return -1;
+	serCputc((char)GENIE_READ_OBJ);
+	checksum = GENIE_READ_OBJ;
+	serCputc(object);
+	checksum ^= object;
+	serCputc(index);
+	checksum ^= index;
+	serCputc(checksum);
+	return 0;
+}
+
+
+/*** BeginHeader genieWriteObject */
+unsigned int genieWriteObject(char object, char index, unsigned int data);
+/*** EndHeader */
+
+unsigned int genieWriteObject(char object, char index, unsigned int data){
+    char checksum;
+    unsigned long timeout_write;
+    int command_return;
+
+    if (!displayDetected)
+        return -1;
+    pendingACK = 1;
+    serCputc(GENIE_WRITE_OBJ);
+    checksum = GENIE_WRITE_OBJ;
+    serCputc(object);
+    checksum ^= object;
+    serCputc(index);
+    checksum ^= index;
+    serCputc(highByte(data));
+    checksum ^= highByte(data);
+    serCputc(lowByte(data));
+    checksum ^= lowByte(data);
+    serCputc(checksum);
+    timeout_write = MS_TIMER;
+    while (MS_TIMER - timeout_write <= GENIE_CMD_TIMEOUT) {
+        command_return = genieDoEvents();
+        if (command_return == GENIE_ACK) {
+            return 1;
+        }
+        if (command_return == GENIE_NAK) {
+            return 0;
+        }
+    }
+    if (UserDebuggerHandler != 0) UserDebuggerHandler("Write Object didn't receive any reply\r\n");
+    displayDetectTimer = MS_TIMER + DISPLAY_TIMEOUT + 10000; //manual disconnect
+    return -1; // timeout
+
+}
+
+
+
+/*** BeginHeader genieWriteShortToIntLedDigits */
+unsigned int genieWriteShortToIntLedDigits (char index, int data);
+/*** EndHeader */
+
+unsigned int genieWriteShortToIntLedDigits (char index, int data) {
+    return genieWriteObject(GENIE_OBJ_ILED_DIGITS_L, index, data);
+}
+
+/*** BeginHeader genieWriteFloatToIntLedDigits  */
+unsigned int genieWriteFloatToIntLedDigits (char index, float data) ;
+/*** EndHeader */
+
+unsigned int genieWriteFloatToIntLedDigits (char index, float data) {
+	 int retval;
+    FloatLongFrame frame;
+    frame.floatValue = data;
+
+    retval = genieWriteObject(GENIE_OBJ_ILED_DIGITS_H, index, frame.wordValue[1]);
+    if (retval == 1) return retval;
+    return genieWriteObject(GENIE_OBJ_ILED_DIGITS_L, index, frame.wordValue[0]);
+}
+
+/*** BeginHeader genieWriteLongToIntLedDigits  */
+unsigned int genieWriteLongToIntLedDigits (char index, long data);
+/*** EndHeader */
+
+unsigned int genieWriteLongToIntLedDigits (char index, long data) {
+	int retval;
+    FloatLongFrame frame;
+    frame.longValue = data;
+
+    retval = genieWriteObject(GENIE_OBJ_ILED_DIGITS_H, index, frame.wordValue[1]);
+    if (retval == 1) return retval;
+    return genieWriteObject(GENIE_OBJ_ILED_DIGITS_L, index, frame.wordValue[0]);
+}
+
+
+/*** BeginHeader genieWriteContrast */
+char genieWriteContrast(char value);
+/*** EndHeader */
+
+char genieWriteContrast(char value) {
+
+	char checksum;
+   unsigned long timeout_write;
+   char command_return;
+
+    if (!displayDetected)
+        return -1;
+
+    pendingACK = 1;
+    if(value) value+=2;   //not on screen save = 0
+    serCputc(GENIE_WRITE_CONTRAST);
+    checksum = GENIE_WRITE_CONTRAST;
+    serCputc(value);
+    checksum ^= value;
+    serCputc(checksum);
+    timeout_write = MS_TIMER;
+    while (MS_TIMER - timeout_write <= GENIE_CMD_TIMEOUT) {
+        command_return = genieDoEvents();
+        if (command_return == GENIE_ACK) {
+            return 1;
+        }
+        if (command_return == GENIE_NAK) {
+            return 0;
+        }
+    }
+    if (UserDebuggerHandler != 0) UserDebuggerHandler("Write Contrast didn't receive any reply\r\n");
+    displayDetectTimer = MS_TIMER + DISPLAY_TIMEOUT + 10000; //manual disconnect
+    return -1; // timeout
+}
+
+
+
+/*** BeginHeader genieWriteStr */
+unsigned int genieWriteStr(char index, char *string);
+/*** EndHeader */
+
+unsigned int genieWriteStr(char index, char *string) {
+
+   char* p;
+   char checksum;
+   char len;
+   unsigned long timeout_write;
+   char command_return;
+
+    if (!displayDetected)
+        return -1;
+
+    pendingACK = 1;
+    len = strlen(string);
+    if (len > 255)
+        return -1;
+    serCputc(GENIE_WRITE_STR);
+    checksum = GENIE_WRITE_STR;
+    serCputc(index);
+    checksum ^= index;
+    serCputc(len);
+    checksum ^= len;
+    for (p = string; *p; ++p) {
+        serCputc(*p);
+        checksum ^= *p;
+    }
+    serCputc(checksum);
+    timeout_write = MS_TIMER;
+    while (MS_TIMER - timeout_write <= GENIE_CMD_TIMEOUT) {
+        command_return = genieDoEvents();
+        if (command_return == GENIE_ACK) {
+            return 1;
+        }
+        if (command_return == GENIE_NAK) {
+            return 0;
+        }
+    }
+    if (UserDebuggerHandler != 0) UserDebuggerHandler("Write String didn't receive any reply\r\n");
+//    displayDetectTimer = MS_TIMER + DISPLAY_TIMEOUT + 10000; //manual disconnect
+    return -1; // timeout
+}
+
+/*** BeginHeader genieWriteStrU */
+unsigned int genieWriteStrU(char index, unsigned int *string);
+/*** EndHeader */
+
+unsigned int genieWriteStrU(char index, unsigned int *string) {
+
+	unsigned long timeout_write;
+   int * p = string;
+   char checksum;
+   int len;
+
+   len = 0;
+    if (!displayDetected)
+        return -1;
+
+    while (*p++) len++;
+
+
+    pendingACK = 1;
+    serCputc(GENIE_WRITE_STRU);
+    checksum = GENIE_WRITE_STRU;
+    serCputc(index);
+    checksum ^= index;
+    serCputc((unsigned char)len);
+    checksum ^= len;
+    for (p = string; *p; ++p) {
+        serCputc(*p >> 8);
+        checksum ^= *p >> 8;
+        serCputc(*p);
+        checksum ^= *p & 0xff;
+        p++;
+    }
+    serCputc(checksum);
+    timeout_write = MS_TIMER;
+    while (MS_TIMER - timeout_write <= GENIE_CMD_TIMEOUT) {
+        char command_return = genieDoEvents();
+        if (command_return == GENIE_ACK) {
+            return 1;
+        }
+        if (command_return == GENIE_NAK) {
+            return 0;
+        }
+    }
+    if (UserDebuggerHandler != 0) UserDebuggerHandler("Write Unicode String didn't receive any reply\r\n");
+//    displayDetectTimer = MS_TIMER + DISPLAY_TIMEOUT + 10000; //manual disconnect
+    return -1; // timeout
+}
+
+/*** BeginHeader genieWriteInhLabelDefault */
+int genieWriteInhLabelDefault(char index);
+/*** EndHeader */
+
+int genieWriteInhLabelDefault(char index) {
+    return genieWriteObject(GENIE_OBJ_ILABELB, index, -1);
+}
+
+/*** BeginHeader genieWriteInhLabel */
+int genieWriteInhLabel(char index, char * string) ;
+/*** EndHeader */
+
+int genieWriteInhLabel(char index, char * string) {
+
+	char checksum;
+   char command_return;
+
+    if (!displayDetected)
+        return -1;
+    char* p;
+
+    pendingACK = 1;
+    int len = strlen(string);
+    if (len > 255)
+        return -1;
+    serCputc(GENIE_WRITE_INH_LABEL);
+    checksum = GENIE_WRITE_INH_LABEL;
+    serCputc(index);
+    checksum ^= index;
+    serCputc((unsigned char)len);
+    checksum ^= len;
+    for (p = string; *p; ++p) {
+        serCputc(*p);
+        checksum ^= *p;
+    }
+    serCputc(checksum);
+    unsigned long timeout_write = MS_TIMER;
+    while (MS_TIMER - timeout_write <= GENIE_CMD_TIMEOUT) {
+        command_return = genieDoEvents();
+        if (command_return == GENIE_ACK) {
+            return 1;
+        }
+        if (command_return == GENIE_NAK) {
+            return 0;
+        }
+    }
+    if (UserDebuggerHandler != 0) UserDebuggerHandler("Write String didn't receive any reply\r\n");
+//    displayDetectTimer = MS_TIMER + DISPLAY_TIMEOUT + 10000; //manual disconnect
+    return -1; // timeout
+}
+
+
+
+/*** BeginHeader genieEventIs */
+char genieEventIs(genieFrame * e, char cmd, char object, char index);
+/*** EndHeader */
+
+char genieEventIs(genieFrame * e, char cmd, char object, char index) {
+    return (e->reportObject.cmd == cmd && e->reportObject.object == object && e->reportObject.index == index);
+}
+
+
+
+/*** BeginHeader genieGetEventData */
+unsigned int genieGetEventData(genieFrame * e);
+/*** EndHeader */
+
+unsigned int genieGetEventData(genieFrame * e) {
+    return (e->reportObject.data_msb << 8) + e->reportObject.data_lsb;
+}
+
+
+/*** BeginHeader genieDequeueEvent */
+char genieDequeueEvent(genieFrame * buff);
+/*** EndHeader */
+
+char genieDequeueEvent(genieFrame * buff) {
+    if (EventQueue.n_events > 0) {
+        memcpy(buff, &EventQueue.frames[EventQueue.rd_index], GENIE_FRAME_SIZE);
+        EventQueue.rd_index++;
+        EventQueue.rd_index &= MAX_GENIE_EVENTS - 1;
+        EventQueue.n_events--;
+    }
+    return 0;
+}
+
+
+/*** BeginHeader genieDoEvents */
+char genieDoEvents();
+/*** EndHeader */
+
+char genieDoEvents() {
+
+
+    char rx_data[6]; // array for receiving command, payload, and crc.
+    char checksumVerify; // used to calculate a matching (or not) checksum.
+
+    geniePing(); // used to keep lcd connection alive
+
+//    if (UserDebuggerHandler != 0) UserDebuggerHandler("Genie Bytes Available : %i\r\n", serCgetcCount());
+    // ######################################
+    // ## SLOW USER CODE? NO PROBLEM! #######
+    // ######################################
+
+    if (MS_TIMER - delayedCycles >= DISPLAY_TIMEOUT) {
+        displayDetectTimer = MS_TIMER; // reset counter to prevent false disconnections.
+    }
+    delayedCycles = MS_TIMER; // reset the doevents function timeout, every cycle.
+
+    if (genieOnline()) {
+//        if (UserDebuggerHandler != 0) UserDebuggerHandler(" Current Time : %lu ms\r\nPrevious Time : %lu ms\r\n", MS_TIMER, displayDetectTimer);
+        if (MS_TIMER - displayDetectTimer > DISPLAY_TIMEOUT) { // code online, but lcd is not?
+            displayDetectTimer = MS_TIMER;
+            displayDetected = 0;
+            pingRequest = 0;
+            rx_data[0] = GENIE_PING;
+            rx_data[1] = GENIE_DISCONNECTED;
+            rx_data[2] = 0;
+            rx_data[3] = 0;
+            rx_data[4] = 1;
+            rx_data[5] = 0;
+            if (UserDebuggerHandler != 0) UserDebuggerHandler("Display was not responding for quite a while. Is it disconnected?\r\n");
+            genieEnqueueEvent(rx_data);
+            currentForm = -1; // reset form holder
+            return -1;
+        }
+    }
+
+    if (!displayDetected) { // not online?
+        pendingACK = 0; // reset pending ACK check
+        currentForm = -1; // reset form holder
+        display_uptime = 0; // keeps timer reset
+    }
+
+    // ######################################
+    // ## Main State Machine ################
+    // ######################################
+
+    if (serCrdUsed() > 0) {
+
+    	 char b;
+       int i;
+
+        b = serCpeek(); // Look at the next byte but don't pull it yet.
+        if (!displayDetected && (b == GENIEM_REPORT_BYTES || b == GENIEM_REPORT_DBYTES))
+            b = 0xFF; // force bad bytes instead of false triggering genie magic switches.
+        switch (b) { // We're going to parse what we see into the proper switch.
+
+        case GENIE_ACK:
+            displayDetectTimer = MS_TIMER; // reset display timeout since the packet is good.
+            serCgetc(); // remove ACK
+            badByteCounter = 0; // reset the bad byte counter
+            pendingACK = 0;
+            nakInj = 0; // reset NAK counter
+            return GENIE_ACK;
+
+        case GENIE_NAK:
+            displayDetectTimer = MS_TIMER; // reset display timeout since the packet is good.
+            serCgetc(); // remove NAK
+            nakInj++; // increment consecutive NAK counter.
+            while (serCpeek() == GENIE_NAK)
+                serCgetc(); // remove trailing naks for next test
+            if (nakInj >= 2) { // if NAK's are consecutive 2 or more times...
+                nakInj = 0; // reset the counter
+                serCputc(0xFF); // inject a byte into the tx buffer to attempt recovery.
+            }
+            pendingACK = 0;
+            return GENIE_NAK;
+
+        case GENIEM_REPORT_BYTES:
+            if (serCrdUsed() < 3)
+                break; // magic report event less than 3 bytes? check again.
+            rx_data[0] = serCgetc();
+            rx_data[1] = serCgetc();
+            rx_data[2] = serCgetc();
+            displayDetectTimer = MS_TIMER; // reset display timeout since the packet is good.
+            badByteCounter = 0; // reset the bad byte counter
+            if (UserMagicByteHandler != NULL)
+                UserMagicByteHandler(rx_data[1], rx_data[2]);
+            else
+                for (i = 0; i < rx_data[2]; i++)
+                    serCgetc();
+            (void)genieGetNextByte();
+            return GENIEM_REPORT_BYTES;
+
+        case GENIEM_REPORT_DBYTES:
+            if (serCrdUsed() < 3)
+                break; // magic report event less than 3 bytes? check again.
+            rx_data[0] = serCgetc();
+            rx_data[1] = serCgetc();
+            rx_data[2] = serCgetc();
+            displayDetectTimer = MS_TIMER; // reset display timeout since the packet is good.
+            badByteCounter = 0; // reset the bad byte counter
+            if (UserMagicDByteHandler != NULL)
+                UserMagicDByteHandler(rx_data[1], rx_data[2]);
+            else
+                for (i = 0; i < 2 * rx_data[2]; i++)
+                    serCgetc();
+            (void)genieGetNextByte();
+            return GENIEM_REPORT_DBYTES;
+
+        case GENIE_REPORT_EVENT:
+            if (serCrdUsed() < 6)
+                break; // report event less than 6 bytes? check again.
+            rx_data[0] = serCgetc();
+            rx_data[1] = serCgetc();
+            rx_data[2] = serCgetc();
+            rx_data[3] = serCgetc();
+            rx_data[4] = serCgetc();
+            rx_data[5] = serCgetc();
+            checksumVerify = rx_data[0];
+            checksumVerify ^= rx_data[1];
+            checksumVerify ^= rx_data[2];
+            checksumVerify ^= rx_data[3];
+            checksumVerify ^= rx_data[4];
+            if (checksumVerify != rx_data[5])
+                return 0; //discard this packet, CRC is bad.
+            displayDetectTimer = MS_TIMER; // reset display timeout since the packet is good.
+            badByteCounter = 0; // reset the bad byte counter
+            if (rx_data[1] == GENIE_OBJ_FORM)
+                currentForm = rx_data[2];
+            genieEnqueueEvent(rx_data);
+            return GENIE_REPORT_EVENT;
+
+        case GENIE_REPORT_OBJ:
+            if (serCrdUsed() < 6) {
+            //	if (UserDebuggerHandler != 0) UserDebuggerHandler("Genie Report Object has not enough bytes: %i\r\n", serCgetcCount());
+                break; // report event less than 6 bytes? check again.
+            }
+            rx_data[0] = serCgetc();
+            rx_data[1] = serCgetc();
+            rx_data[2] = serCgetc();
+            rx_data[3] = serCgetc();
+            rx_data[4] = serCgetc();
+            rx_data[5] = serCgetc();
+            checksumVerify = rx_data[0];
+            checksumVerify ^= rx_data[1];
+            checksumVerify ^= rx_data[2];
+            checksumVerify ^= rx_data[3];
+            checksumVerify ^= rx_data[4];
+            if (checksumVerify != rx_data[5]){
+            	if (UserDebuggerHandler != 0) UserDebuggerHandler("Genie Report Object has bad CRC\r\n");
+            	return 0; //discard this packet, CRC is bad.
+            }
+
+            displayDetectTimer = MS_TIMER; // reset display timeout since the packet is good.
+            badByteCounter = 0; // reset the bad byte counter
+            if (rx_data[1] == GENIE_OBJ_FORM) {
+                currentForm = rx_data[4];
+                if (UserDebuggerHandler != 0) UserDebuggerHandler("Got Current Form\r\n");
+            }
+            //if ( genieStart ) { genieStart = 0; return GENIE_REPORT_OBJ; } // disable startup form checker
+
+            if ((autoPing || pingRequest) && rx_data[1] == GENIE_OBJ_FORM) {
+                if (autoPing) {
+                    autoPing = 0; //switch off after queueing event
+                    if (!displayDetected) { // if previously disconnected and now is connected...
+                        display_uptime = MS_TIMER; // start uptime timer (ms)
+                        rx_data[0] = GENIE_PING;
+                        rx_data[1] = GENIE_READY;
+                        rx_data[2] = 0;
+                        rx_data[3] = 0;
+                        rx_data[4] = 0;
+                        rx_data[5] = 0;
+                        genieEnqueueEvent(rx_data); // send ready state to user handler.
+                        while (serCrdUsed() > 0)
+                            serCgetc(); // clear on new connect
+                        displayDetected = 1; // turn on functions
+                    }
+                    if (genieStart) {
+                        genieStart = 0;
+                        return GENIE_REPORT_OBJ;
+                    }
+                    break;
+                }
+
+                if (pingRequest) {
+                    pingRequest = 0; //switch off after queueing event
+                    rx_data[0] = GENIE_PING;
+                    rx_data[1] = GENIE_ACK;
+                    rx_data[2] = 0;
+                    rx_data[3] = 0;
+                    rx_data[4] = 0;
+                    rx_data[5] = 0;
+                    genieEnqueueEvent(rx_data); // send ACK to user ping request in handler.
+                }
+                break;
+            }
+
+            genieEnqueueEvent(rx_data);
+            return GENIE_REPORT_OBJ; // all other reading of object data flow to event handler
+
+        default: // unknown bytes found, shift out and start count for possible disconnection.
+//            char bad_byte = serCgetc();
+        	(void) serCgetc();
+            badByteCounter++; // We count consecutively to 10 bytes in a row and assume display offline.
+            if (badByteCounter > 10) {
+                badByteCounter = 0; // let DoEvents do the disconnection.
+                if (UserDebuggerHandler != 0) UserDebuggerHandler("Bad bytes received. Manual disconnect\r\n");
+                displayDetectTimer = MS_TIMER + DISPLAY_TIMEOUT + 10000;
+            }
+            return GENIE_NAK;
+        }
+    }
+    if (!pendingACK && EventQueue.n_events > 0 && UserHandler != NULL)
+        UserHandler(); // trigger userhandler if queues exist.
+    return 0;
+}
+
+/*** BeginHeader genieAttachDebugger */
+void genieAttachDebugger(UserDebuggerHandlerPtr handler);
+/*** EndHeader */
+
+void genieAttachDebugger(UserDebuggerHandlerPtr handler) {
+	UserDebuggerHandler = handler;
+}
+
+/*** BeginHeader genieAttachEventHandler */
+void genieAttachEventHandler(UserEventHandlerPtr handler);
+/*** EndHeader */
+
+void genieAttachEventHandler(UserEventHandlerPtr handler) {
+
+	char rx_data[6];
+
+    UserHandler = handler;
+
+    // display status already collected from Begin function, user just enabled handler, so give a status.
+    if (displayDetected) {
+        rx_data[0] = GENIE_PING;
+        rx_data[1] = GENIE_READY;
+        rx_data[2] = 0;
+        rx_data[3] = 0;
+        rx_data[4] = 0;
+        rx_data[5] = 0;
+    }
+    else {
+        rx_data[0] = GENIE_PING;
+        rx_data[1] = GENIE_DISCONNECTED;
+        rx_data[2] = 0;
+        rx_data[3] = 0;
+        rx_data[4] = 0;
+        rx_data[5] = 0;
+        if (UserDebuggerHandler != 0) UserDebuggerHandler("Display was disconnected while attaching event handler\r\n");
+    }
+    genieEnqueueEvent(rx_data); // send current state to user handler.
+}
+
+
+
+
+/*** BeginHeader genieAttachMagicByteReader */
+void genieAttachMagicByteReader(UserMagicByteHandlerPtr handler);
+/*** EndHeader */
+
+void genieAttachMagicByteReader(UserMagicByteHandlerPtr handler) {
+    UserMagicByteHandler = handler;
+}
+
+/*** BeginHeader genieAttachMagicDoubleByteReader */
+void genieAttachMagicDoubleByteReader(UserMagicDByteHandlerPtr handler);
+/*** EndHeader */
+
+void genieAttachMagicDoubleByteReader(UserMagicDByteHandlerPtr handler) {
+    UserMagicDByteHandler = handler;
+}
+
+/*** BeginHeader genieOnline */
+char genieOnline();
+/*** EndHeader */
+
+char genieOnline() {
+    return displayDetected;
+}
+
+
+/*** BeginHeader genieUptime */
+unsigned long genieUptime();
+/*** EndHeader */
+
+unsigned long genieUptime() {
+    if (displayDetected)
+        return MS_TIMER - display_uptime;
+    else
+        return 0;
+}
+
+/*** BeginHeader genieCurrentForm */
+char	genieCurrentForm();
+/*** EndHeader */
+
+char	genieCurrentForm() {
+	return currentForm;
+}
+
+/*** BeginHeader genieActivateForm */
+void genieActivateForm(char form);
+/*** EndHeader */
+
+void genieActivateForm(char form) {
+    genieWriteObject(GENIE_OBJ_FORM, form, (char)0x00);
+}
+
+/*** BeginHeader genieRecover */
+void genieRecover(char pulses);
+/*** EndHeader */
+
+void genieRecover(char pulses) {
+    recover_pulse = pulses;
+}
+
+/*** BeginHeader genieTimeout */
+char genieTimeout(unsigned int value);
+/*** EndHeader */
+
+char genieTimeout(unsigned int value) {
+    if (value < 50)
+        return 0; // no less than 50 recommended! this will trigger the disconnect flag!
+    GENIE_CMD_TIMEOUT = value;
+    return 1;
+}
+
+/*** BeginHeader geniePing */
+char geniePing();
+/*** EndHeader */
+
+char geniePing() {
+
+	 char checksum;
+    unsigned int geniePingTimerChanger;
+
+    if (displayDetected)
+        geniePingTimerChanger = AUTO_PING_CYCLE; // preset online pinger
+    if (!displayDetected)
+        geniePingTimerChanger = recover_pulse; // 50ms offline pinger
+    if (MS_TIMER - autoPingTimer > geniePingTimerChanger) {
+        autoPingTimer = MS_TIMER;
+        autoPing = 1;
+
+        serCputc((char)GENIE_READ_OBJ);
+        checksum = GENIE_READ_OBJ;
+        serCputc((char)GENIE_OBJ_FORM);
+        checksum ^= (char)GENIE_OBJ_FORM;
+        serCputc((char)0x00);
+        checksum ^= (char)0x00;
+        serCputc(checksum);
+        if (UserDebuggerHandler != 0) UserDebuggerHandler("Sending Read Form as Ping\r\n");
+    }
+    return 1;
+}
+
+
+
+/*** BeginHeader genieEnableAutoPing */
+unsigned int genieEnableAutoPing(unsigned int interval);
+/*** EndHeader */
+
+unsigned int genieEnableAutoPing(unsigned int interval) {
+
+	char checksum;
+   char rx_data[6];
+
+    if (displayDetected) {
+        if (MS_TIMER - ping_spacer < interval)
+            return 0;
+        ping_spacer = MS_TIMER;
+        pingRequest = 1;
+
+        serCputc((char)GENIE_READ_OBJ);
+        checksum = GENIE_READ_OBJ;
+        serCputc((char)GENIE_OBJ_FORM);
+        checksum ^= (char)GENIE_OBJ_FORM;
+        serCputc((char)0x00);
+        checksum ^= (char)0x00;
+        serCputc(checksum);
+        return 1;
+    }
+    if (!displayDetected) {
+        if (MS_TIMER - ping_spacer > interval) {
+            ping_spacer = MS_TIMER;
+            rx_data[0] = GENIE_PING;
+            rx_data[1] = GENIE_NAK;
+            rx_data[2] = 0;
+            rx_data[3] = 0;
+            rx_data[4] = 0;
+            rx_data[5] = 0;
+            genieEnqueueEvent(rx_data);
+        }
+    }
+    return 0;
+}
+
+// Genie Magic functions (ViSi-Genie Pro Only)
+
+/*** BeginHeader _genieWriteMagicBytes */
+int _genieWriteMagicBytes(unsigned intindex, char *bytes, unsigned int len, char report);
+/*** EndHeader */
+
+int _genieWriteMagicBytes(unsigned int index, char *bytes, unsigned int len, char report) {
+
+	char checksum;
+   int i;
+   char command_return;
+
+    if (!displayDetected)
+        return -1;
+
+    serCputc(GENIEM_WRITE_BYTES);
+    checksum = GENIEM_WRITE_BYTES;
+    serCputc(index);
+    checksum ^= index;
+    serCputc(len);
+    checksum ^= len;
+    for ( i = 0; i < len; i++) {
+        serCputc(bytes[i]);
+        checksum ^= bytes[i];
+    }
+    serCputc(checksum);
+
+    if (!report) return 1;
+	pendingACK = 1;
+
+    unsigned long timeout_write = MS_TIMER;
+
+    while (MS_TIMER - timeout_write <= GENIE_CMD_TIMEOUT) {
+		command_return = genieDoEvents();
+		if (command_return == GENIE_ACK) {
+			return 1;
+		}
+		if (command_return == GENIE_NAK) {
+			return 0;
+		}
+	}
+
+    if (UserDebuggerHandler != 0) UserDebuggerHandler("Write Magic Bytes didn't receive any reply\r\n");
+	displayDetectTimer = MS_TIMER + DISPLAY_TIMEOUT + 10000; //manual disconnect
+	return -1; // timeout
+}
+
+
+/*** BeginHeader _genieWriteMagicDBytes */
+int _genieWriteMagicDBytes(unsigned int index, unsigned int *shorts, unsigned int len, char report);
+/*** EndHeader */
+
+int _genieWriteMagicDBytes(unsigned int index, unsigned int *shorts, unsigned int len, char report) {
+
+	char checksum;
+   int i;
+   char command_return;
+
+    if (!displayDetected)
+        return -1;
+
+    serCputc(GENIEM_WRITE_DBYTES);
+    checksum = GENIEM_WRITE_DBYTES;
+    serCputc(index);
+    checksum ^= index;
+    serCputc(len);
+    checksum ^= len;
+    for (i = 0; i < len; i++) {
+        serCputc(shorts[i] >> 8);
+        checksum ^= shorts[i] >> 8;
+        serCputc(shorts[i] & 0xFF);
+        checksum ^= shorts[i] & 0xff;
+    }
+    serCputc(checksum);
+
+    if (!report) return 1;
+	pendingACK = 1;
+
+    unsigned long timeout_write = MS_TIMER;
+
+    while (MS_TIMER - timeout_write <= GENIE_CMD_TIMEOUT) {
+		command_return = genieDoEvents();
+		if (command_return == GENIE_ACK) {
+			return 1;
+		}
+		if (command_return == GENIE_NAK) {
+			return 0;
+		}
+	}
+
+    if (UserDebuggerHandler != 0) UserDebuggerHandler("Write Magic Double Bytes didn't receive any reply\r\n");
+	displayDetectTimer = MS_TIMER + DISPLAY_TIMEOUT + 10000; //manual disconnect
+	return -1; // timeout
+}
+
+
+
+/*** BeginHeader genieGetNextByte */
+char genieGetNextByte(void);
+/*** EndHeader */
+
+char genieGetNextByte(void) {
+
+	char rx_data[6];
+   unsigned long timeout;
+
+    if (!displayDetected)
+        return -1; // user code may keep requesting, block till ready.
+
+    timeout = MS_TIMER;
+    while (serCrdUsed() < 1) {
+        delayedCycles = MS_TIMER;
+        displayDetectTimer = MS_TIMER;
+        if (MS_TIMER - timeout >= 2000) { // we issue an immediate manual disconnect.
+            displayDetectTimer = MS_TIMER;
+            displayDetected = 0;
+            while (serCrdUsed() > 0)
+                serCgetc();
+            rx_data[0] = GENIE_PING;
+            rx_data[1] = GENIE_DISCONNECTED;
+            rx_data[2] = 0;
+            rx_data[3] = 0;
+            rx_data[4] = 0;
+            rx_data[5] = 0;
+            if (UserDebuggerHandler != 0) UserDebuggerHandler("Display was disconnected while waiting for next byte\r\n");
+            genieEnqueueEvent(rx_data);
+            return 0;
+        }
+        continue;
+    }
+    delayedCycles = MS_TIMER;
+    displayDetectTimer = MS_TIMER;
+    return serCgetc();
+}
+
+
+
+
+/*** BeginHeader genieGetNextDoubleByte */
+int genieGetNextDoubleByte(void);
+/*** EndHeader */
+
+int genieGetNextDoubleByte(void) {
+
+	char rx_data[6];
+   unsigned long timeout = MS_TIMER;
+   int out;
+
+    if (!displayDetected)
+        return -1; // user code may keep requesting, block till ready.
+
+    while (serCrdUsed() < 2) {
+        delayedCycles = MS_TIMER;
+        displayDetectTimer = MS_TIMER;
+        if (MS_TIMER - timeout >= 2000) { // we issue an immediate manual disconnect.
+            displayDetectTimer = MS_TIMER;
+            displayDetected = 0;
+            while (serCrdUsed() > 0)
+                serCgetc();
+            rx_data[0] = GENIE_PING;
+            rx_data[1] = GENIE_DISCONNECTED;
+            rx_data[2] = 0;
+            rx_data[3] = 0;
+            rx_data[4] = 0;
+            rx_data[5] = 0;
+            if (UserDebuggerHandler != 0) UserDebuggerHandler("Display was disconnected while waiting for next two bytes\r\n");
+            genieEnqueueEvent(rx_data);
+            return -1;
+        }
+        continue;
+    }
+    delayedCycles = MS_TIMER;
+    displayDetectTimer = MS_TIMER;
+    out = (serCgetc()) << 8;
+    out |= serCgetc();
+    return out;
+}
+
+// Private Functions
+
+/*** BeginHeader genieEnqueueEvent */
+char genieEnqueueEvent(char * data);
+/*** EndHeader */
+
+char genieEnqueueEvent(char * data) {
+
+    char fnd;
+    int i, j;
+
+    fnd = 0;
+    if (EventQueue.n_events < MAX_GENIE_EVENTS - 2) {
+
+
+        j = EventQueue.wr_index;
+        for (i = EventQueue.n_events; i > 0; i--) {
+            j--;
+            if (j < 0)
+                j = MAX_GENIE_EVENTS - 1;
+            if ((EventQueue.frames[j].reportObject.cmd == data[0]) && (EventQueue.frames[j].reportObject.object == data[1]) && (EventQueue.frames[j].reportObject.index == data[2])) {
+                EventQueue.frames[j].reportObject.data_msb = data[3];
+                EventQueue.frames[j].reportObject.data_lsb = data[4];
+                fnd = 1;
+                break;
+            }
+        }
+        if (!fnd) {
+            memcpy(&EventQueue.frames[EventQueue.wr_index], data, GENIE_FRAME_SIZE);
+            EventQueue.wr_index++;
+            EventQueue.wr_index &= MAX_GENIE_EVENTS - 1;
+            EventQueue.n_events++;
+        }
+        return fnd;
+    }else{
+   	printf("max events reached");
+		}
+
+    return 0;
+
+}

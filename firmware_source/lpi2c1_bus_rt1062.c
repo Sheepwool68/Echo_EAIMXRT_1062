@@ -13,7 +13,18 @@
 #include "fsl_lpi2c.h"
 #include "fsl_common.h"
 #include "systick_ms_rt1062.h"
+#include "debug_console_rt1062.h"
 #include <stdbool.h>
+
+/* PRINTF redirect to LPUART5 -- see debug_console_rt1062.h and
+ * hello_world.c's own redirect comment for the full "why" (semihosting
+ * PRINTF blocks forever if the SWD/LPC-Link debug connection drops).
+ * Must come after whatever transitively pulled in fsl_debug_console.h's
+ * own #define PRINTF (peripherals.h, above) so this wins;
+ * lpuart5_console_rt1062_init() must have already run in hello_world.c's
+ * main() before any of this file's PRINTF calls fire. */
+#undef PRINTF
+#define PRINTF debug_printf
 
 /* Bus hang guard: if wiring/pull-ups/IRQ routing are wrong, the callback
  * may never fire at all (neither success nor NAK) -- without this bound

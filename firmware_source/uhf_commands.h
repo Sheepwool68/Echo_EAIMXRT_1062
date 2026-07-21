@@ -66,6 +66,13 @@ typedef enum {
  * was the active one in the source; exposed as a parameter here
  * instead of silently hardcoding just that one. */
 typedef enum {
+    UHF_POWER_15DBM   = 0x05DC, /* NOT from the original source -- computed
+        2026-07-14 from the linear dBm*100 encoding the other four
+        constants confirm exactly (20.00->0x07D0, 31.50->0x0C4E,
+        32.00->0x0C80, 32.50->0x0CB2, all checked against dBm*100 and
+        matching precisely). Added for a power-limited test board that
+        can't supply the original's default 31.5dBm -- test-only use,
+        see hello_world.c's uhf_reader bring-up test. */
     UHF_POWER_20DBM   = 0x07D0,
     UHF_POWER_31_5DBM = 0x0C4E, /* was the active default in the original */
     UHF_POWER_32DBM   = 0x0C80,

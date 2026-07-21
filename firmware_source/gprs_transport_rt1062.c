@@ -73,6 +73,19 @@
  * off Modem` exactly (was PA2, initial state "power off"). Goes
  * through the HAL adapter (BOARD_INITPINS_MODEM_PWR_handle), same as
  * the wake pin above.
+ *
+ * BRIEFLY REPURPOSED and then UN-repurposed, both 2026-07-17: for part
+ * of one session this pin was made a no-op on the belief it was
+ * physically wired to the button LED instead (see button_led_rt1062.c).
+ * That was based on an initial verbal identification that turned out to
+ * be wrong -- once the user provided the actual schematic reference for
+ * the LED's real two pins (GPIO_SD_B0_04/GPIO3 pin 16 and
+ * GPIO_SD_B0_05/READER_PWR), MODEM_PWR was confirmed to never have been
+ * one of them at all. Restored to its real, original purpose below --
+ * still worth noting, though, given the user separately confirmed the
+ * physical modem-power circuit on this board is hardwired always-on
+ * externally, so writes here may not have an externally observable
+ * effect on this particular board regardless.
  */
 #define GPRS_POWER_EN_HANDLE     BOARD_INITPINS_MODEM_PWR_handle
 
@@ -88,8 +101,18 @@ typedef struct {
 
 static rt1062_gprs_ctx_t s_ctx;
 
+/* Overrun handling added 2026-07-17 -- see uhf_transport_rt1062.c's
+ * LPUART8_IRQHandler() for the full story (found there first, this
+ * driver shares the identical gap): without checking/clearing
+ * kLPUART_RxOverrunFlag, an overrun permanently deadlocks RDRF (and
+ * therefore this whole ISR) since RDRF can't assert again while OR is
+ * held -- nothing left to ever re-enter this handler and clear it. */
 void LPUART1_IRQHandler(void)
 {
+    if (LPUART_GetStatusFlags(GPRS_LPUART_BASE) & kLPUART_RxOverrunFlag) {
+        LPUART_ClearStatusFlags(GPRS_LPUART_BASE, kLPUART_RxOverrunFlag);
+    }
+
     while (LPUART_GetStatusFlags(GPRS_LPUART_BASE) & kLPUART_RxDataRegFullFlag) {
         uint8_t byte = LPUART_ReadByte(GPRS_LPUART_BASE);
         size_t next_head = (s_ctx.rx_head + 1) % GPRS_RX_RING_SIZE;
@@ -123,7 +146,12 @@ static int rt1062_gprs_open(void *ctx, uint32_t baud_rate)
     c->rx_head = 0;
     c->rx_tail = 0;
 
-    LPUART_EnableInterrupts(GPRS_LPUART_BASE, kLPUART_RxDataRegFullInterruptEnable);
+    /* kLPUART_RxOverrunInterruptEnable added 2026-07-17 alongside the
+     * ISR fix above -- without it, an overrun could never re-trigger
+     * this ISR to clear itself (RDRF, the only previously-enabled
+     * source, is exactly what an unaddressed overrun suppresses). */
+    LPUART_EnableInterrupts(GPRS_LPUART_BASE,
+                             kLPUART_RxDataRegFullInterruptEnable | kLPUART_RxOverrunInterruptEnable);
     EnableIRQ(GPRS_LPUART_IRQn);
 
     return 0;
@@ -213,9 +241,16 @@ static void rt1062_gprs_set_wake_pin(void *ctx, int level)
 static void rt1062_gprs_set_power_enable(void *ctx, int level)
 {
     (void)ctx;
-    /* Was GPIO_PinWrite(GPRS_POWER_EN_GPIO, GPRS_POWER_EN_PIN, ...) --
-     * now via the HAL adapter handle BOARD_InitPeripherals() already
-     * set up. */
+    /* RESTORED 2026-07-17 -- was briefly a no-op (2026-07-17, same day)
+     * on the mistaken belief that this pin (MODEM_PWR,
+     * BOARD_INITPINS_MODEM_PWR_handle) was one of the button LED's two
+     * leads. Corrected once the user provided the actual schematic
+     * reference for the LED's real pins (GPIO_SD_B0_04/GPIO3 pin 16 and
+     * GPIO_SD_B0_05/READER_PWR -- see button_led_rt1062.h) -- MODEM_PWR
+     * was never actually involved. Back to its real, original purpose:
+     * GPRS modem power-enable. Was GPIO_PinWrite(GPRS_POWER_EN_GPIO,
+     * GPRS_POWER_EN_PIN, ...) -- now via the HAL adapter handle
+     * BOARD_InitPeripherals() already set up. */
     HAL_GpioSetOutput(GPRS_POWER_EN_HANDLE, (uint8_t)level);
 }
 

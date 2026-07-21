@@ -28,6 +28,21 @@ void buzzer_on(void);
 /* CONFIRMED: the same pin driven low. */
 void buzzer_off(void);
 
+/* Was the raw pulse trains inline in UHF_Reader_Control()
+ * (ACTIVERFID_V1.02_UHF.c lines 1515-1522 for the double-beep on
+ * starting reading, lines 1540-1542 for the single beep on stopping):
+ * direct `BitWrPortI(PBDR,...,2); msDelay(50);` toggles. CONFIRMED from
+ * source these are completely unconditional -- unlike every other
+ * Beep() call site in the original, which the CALLER gates on
+ * Settings.Beeper before calling Beep() itself, these two specific
+ * beeps bypass that check entirely and always sound. Blocks for
+ * count*50ms + (count-1)*50ms, toggling ON,50ms,OFF,50ms,ON,... --
+ * use this directly (not app_beep_n(), which is gated on
+ * Settings.Beeper and queues a non-blocking pulse train -- neither
+ * matches these two calls' real behavior) wherever
+ * UHF_Reader_Control()'s beeps need replicating exactly. */
+void buzzer_beep_n_blocking(int count);
+
 #ifdef __cplusplus
 }
 #endif

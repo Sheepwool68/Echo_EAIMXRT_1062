@@ -44,7 +44,37 @@ extern "C" {
 
 #define SETTINGS_STORE_PATH "/settings.dat"
 #define SETTINGS_STORE_MAGIC   0x53455454u
-#define SETTINGS_STORE_VERSION 1u
+/* Bumped 2->3, 2026-07-20: same mechanism as the 1->2 bump above, same
+ * root cause class. rabbit_ip's real default (192.168.1.90, the
+ * "CRITICAL FIX 2026-07-16" in app_init.c) was added to the in-code
+ * defaults AFTER this device had already saved a real settings.dat
+ * with rabbit_ip all-zero (from before that fix existed) -- confirmed
+ * on real hardware: the Network form's GENIE_LAN_STR showed 0.0.0.0
+ * despite the static-IP branch and the corrected default both being
+ * verified correct by direct code review. Nothing in this port ever
+ * writes rabbit_ip back to a different value at runtime, so the stale
+ * zero just kept getting silently reloaded and re-persisted forever.
+ * Bumping the version forces that old file to fail validation on next
+ * boot, same trade-off as before: clears every other saved setting
+ * too (reader_power, channel, System mode, beeper, etc.), accepted
+ * explicitly by the user rather than writing a rabbit_ip-only targeted
+ * fix.
+ *
+ * Bumped 3->4, 2026-07-20, same day: the 2->3 bump alone didn't fix it
+ * -- settings_store_load() had a SEPARATE bug at the time (fixed
+ * separately, see settings_store.c) that read the file's raw bytes
+ * into the caller's live app->settings BEFORE validating, so the very
+ * first boot on v3 loaded the still-present v2 file's zeroed rabbit_ip
+ * into app->settings, got a correct "invalid" verdict a moment later,
+ * but then saved THAT ALREADY-CORRUPTED value as a brand-new, genuinely
+ * self-consistent v3 file (right version, right CRC, just wrong data).
+ * Confirmed on real hardware via the boot-time trace (app_init.c):
+ * `Settings: load OK (existing file valid), rabbit_ip=0.0.0.0`. The
+ * settings_store_load() bug is now fixed too, so THIS bump is the
+ * "for real this time" one -- rejects that bad v3 file, and with the
+ * load bug gone, the fallback save will actually persist the correct
+ * defaults. Same full-reset trade-off as every previous bump. */
+#define SETTINGS_STORE_VERSION 4u
 
 #pragma pack(push, 1)
 typedef struct {

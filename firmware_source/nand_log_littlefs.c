@@ -7,6 +7,20 @@
 #include "nand_log_littlefs.h"
 #include <string.h>
 
+/* Debug tracing, added 2026-07-20 to diagnose "unable to clear log in
+ * the Data form" -- nand_log_reset()'s return value was being silently
+ * discarded at both its call sites (app_genie_dispatch.c/
+ * app_pc_dispatch.c), same "silent failure" class of bug already found
+ * several times this session elsewhere. Same debug_printf/LPUART5
+ * redirect pattern already used in uhf_reader.c/neo_m8t_reader.c/
+ * nrf_spi_protocol.c/etc. */
+#include "debug_console_rt1062.h"
+#undef PRINTF
+/* SILENCED 2026-07-21, per explicit request ("printf on ethernet
+ * comms only after boot"). Was `debug_printf`. Restore if this
+ * tracing is wanted again. */
+#define PRINTF(...) ((void)0)
+
 /* ------------------------------------------------------------------ */
 /* Binary-search adapters: bind rfid_logic.h's generic seek/read/size  */
 /* function pointers to real littlefs calls against an lfs_file_t*.    */
@@ -244,12 +258,32 @@ int nand_log_reset(nand_log_t *log)
 {
     int err;
 
+    /* Traced 2026-07-20 -- diagnosing "unable to clear log in the Data
+     * form": this function's return value was discarded at both call
+     * sites (app_genie_dispatch.c/app_pc_dispatch.c), so any failure
+     * here was completely silent. */
+    if (!log->mounted) {
+        PRINTF("nand_log_reset: FAILED, log not mounted\r\n");
+        return -1;
+    }
+
     if (log->open) {
         nand_log_close(log);
+    }
+    /* Added 2026-07-20 alongside the rewind-dedicated handle: a rewind
+     * can now genuinely be mid-stream (its own handle open across many
+     * main-loop iterations) at the same moment a user triggers a log
+     * reset from the touchscreen/PC command -- close it first so
+     * lfs_remove() below doesn't leave it dangling against a file that
+     * no longer exists. process_rewind()'s next call will see its
+     * read fail and stop cleanly (same as hitting genuine EOF). */
+    if (log->rewind_open) {
+        nand_log_rewind_close(log);
     }
 
     err = lfs_remove(&log->lfs, log->path);
     if (err != 0 && err != LFS_ERR_NOENT) {
+        PRINTF("nand_log_reset: FAILED, lfs_remove(%s) err=%d\r\n", log->path, err);
         return -1;
     }
 
@@ -257,10 +291,12 @@ int nand_log_reset(nand_log_t *log)
         lfs_file_t f;
         err = lfs_file_open(&log->lfs, &f, log->path, LFS_O_CREAT | LFS_O_WRONLY | LFS_O_TRUNC);
         if (err != 0) {
+            PRINTF("nand_log_reset: FAILED, recreate lfs_file_open(%s) err=%d\r\n", log->path, err);
             return -1;
         }
         lfs_file_close(&log->lfs, &f);
     }
+    PRINTF("nand_log_reset: OK, %s cleared\r\n", log->path);
     return 0;
 }
 
@@ -304,6 +340,74 @@ int nand_log_read_next_record(nand_log_t *log, nrf_record_t *out)
         return -1;
     }
     n = lfs_file_read(&log->lfs, &log->file, out, sizeof(*out));
+    if (n < 0) {
+        return -1;
+    }
+    if ((size_t)n != sizeof(*out)) {
+        return 0; /* EOF or torn trailing record -- treat as "no more records" */
+    }
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Rewind-dedicated handle -- see nand_log_t's own field comment       */
+/* (nand_log_littlefs.h) for why this exists separately from           */
+/* file/open above. Bodies are otherwise identical to their non-rewind */
+/* counterparts.                                                        */
+/* ------------------------------------------------------------------ */
+
+int nand_log_rewind_open(nand_log_t *log)
+{
+    int err;
+    if (log->rewind_open) {
+        return -1;
+    }
+    err = lfs_file_open(&log->lfs, &log->rewind_file, log->path, LFS_O_RDONLY);
+    if (err != 0) {
+        return -1;
+    }
+    log->rewind_open = 1;
+    return 0;
+}
+
+int nand_log_rewind_close(nand_log_t *log)
+{
+    int err;
+    if (!log->rewind_open) {
+        return 0;
+    }
+    err = lfs_file_close(&log->lfs, &log->rewind_file);
+    log->rewind_open = 0;
+    return (err == 0) ? 0 : -1;
+}
+
+int nand_log_rewind_binary_search(nand_log_t *log, uint32_t start_value,
+                                   rewind_type_t rewind_type, uint32_t *out_record_no)
+{
+    lfs_search_ctx_t ctx;
+
+    if (!log->rewind_open) {
+        return -1;
+    }
+
+    ctx.lfs = &log->lfs;
+    ctx.file = &log->rewind_file;
+
+    return rfid_binary_search_log(&ctx,
+                                   lfs_seek_adapter,
+                                   lfs_read_adapter,
+                                   lfs_filesize_adapter,
+                                   start_value, rewind_type, out_record_no);
+}
+
+int nand_log_rewind_read_next_record(nand_log_t *log, nrf_record_t *out)
+{
+    lfs_ssize_t n;
+
+    if (!log->rewind_open) {
+        return -1;
+    }
+    n = lfs_file_read(&log->lfs, &log->rewind_file, out, sizeof(*out));
     if (n < 0) {
         return -1;
     }

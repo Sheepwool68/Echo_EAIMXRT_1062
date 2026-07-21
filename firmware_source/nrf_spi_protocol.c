@@ -24,6 +24,24 @@
 #include "nrf_spi_protocol.h"
 #include <string.h>
 
+/* Debug tracing, added 2026-07-20 per explicit request ("time to put
+ * printf on all the nrf commands being fired") -- same pattern already
+ * used in uhf_reader.c/neo_m8t_reader.c: redirect PRINTF to
+ * debug_printf() (LPUART5, independent of the SWD/semihosting debug
+ * link -- see debug_console_rt1062.h's own header comment). This header
+ * has no SDK dependency itself (just a function prototype), so it
+ * doesn't break this file's host-testability -- see
+ * package/host_tests/Makefile's test_nrf_spi_protocol_EXTRA. */
+#include "debug_console_rt1062.h"
+#undef PRINTF
+/* SILENCED 2026-07-20, per explicit request ("clean up this shit, I
+ * dont want to see nrf printf anymore") -- was `debug_printf`. Left
+ * the redirect infrastructure/include in place rather than ripping out
+ * every individual PRINTF call site (lower risk, easily reversible if
+ * this tracing is wanted again later -- just restore the line below to
+ * `#define PRINTF debug_printf`). */
+#define PRINTF(...) ((void)0)
+
 /* ------------------------------------------------------------------ */
 /* Little-endian byte readers (see header for why we parse explicitly  */
 /* instead of memcpy'ing onto a struct).                                */
@@ -60,7 +78,18 @@ static nrf_spi_status_t simple_command(const nrf_spi_transport_t *t,
     t->cs_deassert(t->hw_ctx);
 
     if (rc != 0) {
+        PRINTF("nRF SPI: cmd=0x%02X arg=0x%02X -> TRANSFER FAILED (rc=%d)\r\n", cmd, arg, rc);
         return NRF_SPI_ERR_TRANSFER;
+    }
+    /* Suppressed for the empty-poll case (cmd=0x01, 0xBB "nothing queued"
+     * reply) -- removed 2026-07-20 per explicit request. Now that
+     * NRF_READY is understood to mean "SPI armed and ready to talk", not
+     * "a tag was read" (see project memory), this is the expected,
+     * constant-background-noise outcome of every poll with nothing new
+     * to report -- flooded the LPUART5 console. Every other command/
+     * reply combination still traces normally. */
+    if (!(cmd == 0x01 && rx[0] == NRF_SPI_POLL_IGNORE_SENTINEL)) {
+        PRINTF("nRF SPI: cmd=0x%02X arg=0x%02X -> reply=[0x%02X 0x%02X]\r\n", cmd, arg, rx[0], rx[1]);
     }
     if (reply_out != NULL) {
         reply_out[0] = rx[0];
@@ -85,22 +114,36 @@ nrf_spi_status_t nrf_spi_poll(const nrf_spi_transport_t *t,
         return st;
     }
 
-    /* Original waits for the ready line to go LOW after sending the
-     * poll command, before trusting the reply bytes. */
-    if (t->wait_ready_line(t->hw_ctx, 0, NRF_SPI_READY_TIMEOUT_MS) != 0) {
-        return NRF_SPI_ERR_TIMEOUT;
-    }
+    /* REMOVED 2026-07-20, per explicit hardware finding: the original's
+     * `while(BitRdPortI(PBDR, 3)); //wait for it to go lo` right after
+     * sending the poll assumed READY reliably drops LOW between the
+     * poll reply and the retrieve step -- confirmed on THIS hardware
+     * that a real (non-0xBB) poll reply is not followed by an
+     * observable LOW within 500ms (either it doesn't drop at all, or
+     * drops/rises again faster than this polling loop can catch). That
+     * made this wait a silent failure path: it discarded an already-
+     * valid count/record_type reply and blocked the main loop for the
+     * full timeout every time. reply[0]/reply[1] are already fully
+     * clocked in by the time simple_command()'s transfer above
+     * completes -- trusting them directly here, and letting
+     * process_nrf_spi()'s own outer `if (read_ready_line())` gate (in
+     * app_loop.c) decide when READY being high again means "go ahead
+     * and retrieve", same as it already does for the poll itself. */
 
     if (reply[0] == NRF_SPI_POLL_IGNORE_SENTINEL) {
-        /* Original: silently ignored, spi_record_state reset to 1.
-         * Surfaced here as count == 0 so the caller can log/count it
-         * if useful, rather than it being invisible. */
+        /* Original: silently ignored, spi_record_state reset to 1. No
+         * trace here either -- removed 2026-07-20, same reasoning as
+         * simple_command()'s suppressed trace above, this is the
+         * expected outcome of most polls, not something worth a console
+         * line every time. */
         *out_count = 0;
         *out_record_type = 0;
         return NRF_SPI_OK;
     }
 
     if (reply[0] > NRF_SPI_MAX_RECORDS) {
+        PRINTF("nRF SPI: poll (0x01) -> count=%u exceeds max %u, discarding\r\n",
+               (unsigned)reply[0], (unsigned)NRF_SPI_MAX_RECORDS);
         *out_count = 0;
         *out_record_type = 0;
         return NRF_SPI_ERR_TOO_MANY;
@@ -108,6 +151,8 @@ nrf_spi_status_t nrf_spi_poll(const nrf_spi_transport_t *t,
 
     *out_count = reply[0];
     *out_record_type = reply[1];
+    PRINTF("nRF SPI: poll (0x01) -> count=%u record_type=%u\r\n",
+           (unsigned)*out_count, (unsigned)*out_record_type);
     return NRF_SPI_OK;
 }
 
@@ -140,17 +185,25 @@ int nrf_spi_retrieve_live_records(const nrf_spi_transport_t *t,
     tx[0] = 0x02;
     tx[1] = 0x00;
 
+    PRINTF("nRF SPI: cmd=0x02 (retrieve live records) count=%u\r\n", (unsigned)count);
+
     t->cs_assert(t->hw_ctx);
     t->delay_us(t->hw_ctx, NRF_SPI_CS_SETUP_DELAY_US);
     rc = t->transfer(t->hw_ctx, tx, rx, total_len);
     t->cs_deassert(t->hw_ctx);
     if (rc != 0) {
+        PRINTF("nRF SPI: cmd=0x02 (live) -> TRANSFER FAILED (rc=%d)\r\n", rc);
         return NRF_SPI_ERR_TRANSFER;
     }
 
-    if (t->wait_ready_line(t->hw_ctx, 0, NRF_SPI_READY_TIMEOUT_MS) != 0) {
-        return NRF_SPI_ERR_TIMEOUT;
-    }
+    /* REMOVED 2026-07-20 -- same reasoning as nrf_spi_poll()'s own
+     * removed wait-for-low above: confirmed on this hardware that
+     * READY isn't reliably observed dropping LOW after a real reply,
+     * only after this same problem was hit and fixed one step earlier
+     * (the poll). Leaving this wait in place here would just relocate
+     * the identical silent-discard/500ms-stall failure to the retrieve
+     * step instead of fixing it. rx[] is already fully clocked in by
+     * the time the transfer above completes -- trust it directly. */
 
     out_n = (count < max_out) ? count : max_out;
 
@@ -183,8 +236,28 @@ int nrf_spi_retrieve_live_records(const nrf_spi_transport_t *t,
             rec->ms = (uint16_t)(rec->ms - 1000);
             rec->date_time += 1;
         }
+
+        /* Per-record trace of the actual decoded tag data -- added
+         * 2026-07-20 per explicit request ("we need to read a tag and
+         * see that data on command 2"). The count-only trace above
+         * confirms the transaction happened; this confirms what was
+         * actually IN it, visible on the LPUART5 console without
+         * needing a TCP client connected or a working display attached. */
+        /* loop_id/TimerID decode added 2026-07-20 -- was already correct
+         * and traced in the playback-record case below, but missing here
+         * for live records, the same `(loop_data>>6)&0x0F)+1` decode
+         * rfid_create_sock_string() (rfid_logic.c) already applies
+         * before sending it in the TCP socket string -- that logic was
+         * already correct, just not visible in this console trace. */
+        PRINTF("nRF SPI: cmd=0x02 (live) record[%u]: code=%.6s battery=%u date_time=%lu ms=%u max_RSSI=%d wake_count=%u loop_data=0x%04X timer_id=%u\r\n",
+               (unsigned)n, rec->xpdr_code, (unsigned)rec->battery,
+               (unsigned long)rec->date_time, (unsigned)rec->ms,
+               (int)rec->max_RSSI, (unsigned)rec->wake_count,
+               (unsigned)rec->loop_data,
+               (unsigned)(((rec->loop_data >> 6) & 0x0F) + 1));
     }
 
+    PRINTF("nRF SPI: cmd=0x02 (live) -> %u records parsed\r\n", (unsigned)out_n);
     return (int)out_n;
 }
 
@@ -221,11 +294,14 @@ int nrf_spi_retrieve_playback_records(const nrf_spi_transport_t *t,
     tx[0] = 0x02;
     tx[1] = 0x00;
 
+    PRINTF("nRF SPI: cmd=0x02 (retrieve playback records) count=%u\r\n", (unsigned)count);
+
     t->cs_assert(t->hw_ctx);
     t->delay_us(t->hw_ctx, NRF_SPI_CS_SETUP_DELAY_US);
     rc = t->transfer(t->hw_ctx, tx, rx, total_len);
     t->cs_deassert(t->hw_ctx);
     if (rc != 0) {
+        PRINTF("nRF SPI: cmd=0x02 (playback) -> TRANSFER FAILED (rc=%d)\r\n", rc);
         return NRF_SPI_ERR_TRANSFER;
     }
 
@@ -260,8 +336,19 @@ int nrf_spi_retrieve_playback_records(const nrf_spi_transport_t *t,
         rec->wake_count = 0;
         rec->battery = 0;
         rec->has_been_sent = 0;
+
+        /* Per-record trace, same reasoning as nrf_spi_retrieve_live_records()'s. */
+        PRINTF("nRF SPI: cmd=0x02 (playback) record[%u]: code=%.6s loop_id=%u date_time=%lu ms=%u\r\n",
+               (unsigned)n, rec->xpdr_code, (unsigned)loop_id,
+               (unsigned long)rec->date_time, (unsigned)rec->ms);
     }
 
+    /* Read back from rx[]/header_code directly, not the out-params --
+     * those are caller-optional (NULL-checked above) and may not have
+     * been written. */
+    PRINTF("nRF SPI: cmd=0x02 (playback) -> code=%.6s boots=%lu bt_time=%lu fw=%u, %u records parsed\r\n",
+           header_code, (unsigned long)rd_le32(&rx[8]), (unsigned long)rd_le32(&rx[12]),
+           (unsigned)rx[16], (unsigned)out_n);
     return (int)out_n;
 }
 
@@ -317,8 +404,10 @@ nrf_spi_status_t nrf_spi_program_chip_code(const nrf_spi_transport_t *t,
     rc = t->transfer(t->hw_ctx, cmdb, rx, sizeof(cmdb));
     t->cs_deassert(t->hw_ctx);
     if (rc != 0) {
+        PRINTF("nRF SPI: cmd=0x06 (program chip code, phase 2) -> TRANSFER FAILED (rc=%d)\r\n", rc);
         return NRF_SPI_ERR_TRANSFER;
     }
+    PRINTF("nRF SPI: cmd=0x06 (program chip code) code=%.6s crc=0x%02X\r\n", code, crc);
 
     if (out_crc != NULL) {
         *out_crc = crc;
@@ -358,8 +447,10 @@ nrf_spi_status_t nrf_spi_send_datetime(const nrf_spi_transport_t *t, uint32_t un
     rc = t->transfer(t->hw_ctx, cmdb, rx, sizeof(cmdb));
     t->cs_deassert(t->hw_ctx);
     if (rc != 0) {
+        PRINTF("nRF SPI: cmd=0x09 (send datetime, phase 2) -> TRANSFER FAILED (rc=%d)\r\n", rc);
         return NRF_SPI_ERR_TRANSFER;
     }
+    PRINTF("nRF SPI: cmd=0x09 (send datetime) unix_time=%lu\r\n", (unsigned long)unix_time);
 
     t->delay_ms(t->hw_ctx, 1);
     return NRF_SPI_OK;

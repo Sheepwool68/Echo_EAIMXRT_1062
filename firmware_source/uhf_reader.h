@@ -75,7 +75,11 @@ int uhf_reader_initialise(uhf_reader_t *r, uhf_region_t region,
  */
 int uhf_reader_start(uhf_reader_t *r, int heartbeat_enabled);
 
-/* Was StopReaders(): stops inventory and queries temperature. */
+/* Was StopReaders(): stops inventory. Originally also queried
+ * temperature as a second command -- DISABLED 2026-07-17, see
+ * uhf_reader.c's own comment at that call site (the reader doesn't
+ * reliably answer a temperature query immediately after stop_reading,
+ * only when genuinely idle, and it isn't currently used). */
 int uhf_reader_stop(uhf_reader_t *r);
 
 /* Was GetReaderTemp() (also the second half of StopReaders()). If the

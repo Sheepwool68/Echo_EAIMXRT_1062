@@ -73,6 +73,16 @@ extern "C" {
  * a documented MAX17303 register name. Rename it if you have the
  * datasheet's actual name for register 0x21. */
 #define MAX17303_REG_BOARD_DETECT  0x21
+/* CORRECTED 2026-07-16, same pattern as OVP_BAK above -- confirmed
+ * from the ONE real call site in the whole reference source
+ * (ACTIVERFID_V1.02_UHF.c line 1740, myGenieEventHandler()'s
+ * GENIE_REMOTE case): `max_write(MAX17303_ADDRESS1, MAX17303_FAULTS,
+ * 0x00)`. Despite its offset sitting right in the middle of the
+ * NV-protected group below (which is grouped by offset range, not by
+ * confirmed call site), FAULTS is accessed via the MAIN address, not
+ * NV -- moved up out of that group now that real calling code confirms
+ * it, not just offset-proximity guessing. */
+#define MAX17303_REG_FAULTS        0xAF
 
 /* NV/protected config registers (use MAX17303_ADDR_NV) */
 #define MAX17303_REG_OVP           0xD0
@@ -81,7 +91,6 @@ extern "C" {
 #define MAX17303_REG_FOVCP         0xDD
 #define MAX17303_REG_RESISTOR      0xCF
 #define MAX17303_REG_DELAY         0xDC
-#define MAX17303_REG_FAULTS        0xAF
 #define MAX17303_REG_NVEMPTY       0x9E
 #define MAX17303_REG_NPACKCFG      0xB5
 

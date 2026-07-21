@@ -1,0 +1,180 @@
+/*******************************************************************************
+FINISHLYNX.LIB
+   Copyright (c) RFID Timing 2025
+
+DESCRIPTION:
+   Library for FinishLynx functionality
+
+
+
+
+
+SUPPORT LIB'S:
+   None
+*******************************************************************************/
+
+/*** BeginHeader */
+
+// Riley - Finish Lynx
+#define FINISH_LYNX_PORT 10001
+#define FINISH_LYNX_ACTIVE 1
+
+
+
+// Riley - Time counter for Finish Lynx time sync
+unsigned long		FinishLynx_Last_Time_Sync;
+
+/*** EndHeader */
+
+
+
+
+
+
+// -----------------------------------------------------
+// --------- Riley - Finish Lynx functions -------------
+// -----------------------------------------------------
+
+/*** BeginHeader TCPIPCloseSocket_FinishLynx */
+void TCPIPCloseSocket_FinishLynx();
+/*** EndHeader */
+void TCPIPCloseSocket_FinishLynx()
+{
+	sock_close(&FinishLynxSocket.ServerSocket);
+   printf("Finish Lynx client diconnecting...");
+}
+
+/*** BeginHeader TCPIPOpenSocket_FinishLynx */
+void TCPIPOpenSocket_FinishLynx();
+/*** EndHeader */
+void TCPIPOpenSocket_FinishLynx()
+{
+	// Riley - Listen on Finish Lynx port 10001
+	 tcp_listen(&FinishLynxSocket.ServerSocket, FINISH_LYNX_PORT, 0, 0, NULL, 0);
+}
+
+/*** BeginHeader ProcessDataSocket_FinishLynx */
+void ProcessDataSocket_FinishLynx();
+/*** EndHeader */
+void ProcessDataSocket_FinishLynx()
+{
+	char buf[40];
+   int i;
+   int socket;
+   socket = 0;
+	tcp_tick(NULL);
+   if(sock_alive(&FinishLynxSocket.ServerSocket) == 0)
+   {
+      TCPIPOpenSocket_FinishLynx();
+   }
+	if (!sock_established(&FinishLynxSocket.ServerSocket))// && MyServerSocket.ClientIsConnected == 1)
+   {
+	 	FinishLynxSocket.ClientIsConnected = 0;
+   }
+   else
+   {
+   	if (FinishLynxSocket.ClientIsConnected == 0)
+      {
+     		i = Make_FinishLynx_Time_String(buf);
+			i = sock_fastwrite(&FinishLynxSocket.ServerSocket, buf, i);
+	      FinishLynxSocket.ClientIsConnected = 1;
+	      tcp_keepalive(&FinishLynxSocket.ServerSocket, 0);
+      }
+      else
+      {
+          WriteStatusMessages_FinishLynx();
+          tcp_tick(&FinishLynxSocket.ServerSocket);
+      	 //printf("Finish Lynx client IS connected...");
+      }
+   }
+}
+
+// Writes status messages to the PC - Riley - Finish Lynx
+
+/*** BeginHeader WriteStatusMessages_FinishLynx */
+void WriteStatusMessages_FinishLynx();
+/*** EndHeader */
+
+void WriteStatusMessages_FinishLynx()
+{
+	char buf[100];
+   int i;
+	struct TRemoteConfigRec RemoteConfigRec;
+
+
+   if (MS_TIMER - FinishLynx_Last_Time_Sync > 300000) // 5 minutes (300000 ms) time sync period
+   {
+      // Riley - Finish Lynx
+     	if (FinishLynxSocket.ClientIsConnected)
+      {
+			 i = Make_FinishLynx_Time_String(buf);
+		 	 i = sock_fastwrite(&FinishLynxSocket.ServerSocket, buf, i);
+      }
+		FinishLynx_Last_Time_Sync = MS_TIMER;
+   }
+   else
+   {
+   	return;
+   }
+}
+
+// Riley - Create Finish Lynx formatted string to send via TCP
+
+/*** BeginHeader CreateSockString_FinishLynx */
+int CreateSockString_FinishLynx(struct nrf_record logEntry, char IsRewind, char *s);
+/*** EndHeader */
+
+int CreateSockString_FinishLynx(struct nrf_record logEntry, char IsRewind, char *s)
+{
+	char sChip[20];
+	unsigned long ulTime, millis;
+   struct tm CurTime;
+
+   ulTime = logEntry.date_time;
+   mktm( &CurTime, ulTime );     // convert seconds to date values
+
+	sprintf(sChip, "%.6s", logEntry.xpdr_code);
+
+
+   return   sprintf(s, "%cS,%02d:%02d:%02d.%03d,%s\r\n",
+              0x01,
+              CurTime.tm_hour,
+              CurTime.tm_min,
+              CurTime.tm_sec,
+              logEntry.ms,
+              sChip);
+}
+
+
+/*** BeginHeader Make_FinishLynx_Time_String */
+int Make_FinishLynx_Time_String(char *s);
+/*** EndHeader */
+
+int Make_FinishLynx_Time_String(char *s)
+{
+	unsigned long ulTime, millis;
+   struct tm CurTime;
+	int milliseconds;
+
+	unsigned long thouSecond;
+   unsigned long seconds;
+
+	ulTime = read_rtc();         // get the RTC value
+	mktm( &CurTime, ulTime );     // convert seconds to date values
+
+	milliseconds = MS_TIMER - iDSTimeFromRabbit;
+
+
+
+
+	return sprintf(s, "%cT,%02d:%02d:%02d.%03d\r\n",
+              0x01,
+              CurTime.tm_hour,
+              CurTime.tm_min,
+              CurTime.tm_sec,
+              milliseconds
+              );
+}
+
+
+

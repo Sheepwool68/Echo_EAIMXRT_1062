@@ -38,6 +38,7 @@ int settings_store_load(lfs_t *lfs, device_settings_t *out)
 {
     lfs_file_t f;
     settings_store_header_t hdr;
+    device_settings_t tmp;
     lfs_ssize_t n;
 
     if (lfs_file_open(lfs, &f, SETTINGS_STORE_PATH, LFS_O_RDONLY) != LFS_ERR_OK) {
@@ -50,14 +51,35 @@ int settings_store_load(lfs_t *lfs, device_settings_t *out)
         return 0;
     }
 
-    n = lfs_file_read(lfs, &f, out, sizeof(*out));
+    /* FIXED 2026-07-20 -- was reading directly into `out` (the caller's
+     * live app->settings) here, BEFORE validation below. That meant a
+     * REJECTED file (bad magic/version/size/CRC) still clobbered the
+     * caller's already-correct in-RAM defaults with the invalid file's
+     * raw bytes as a side effect of this read -- the function's return
+     * value correctly reported "invalid", but the damage was already
+     * done, silently defeating app_init.c's own "on failure, the
+     * defaults set above already apply" assumption. Confirmed on real
+     * hardware: bumping SETTINGS_STORE_VERSION (meant to force exactly
+     * this fallback-to-defaults path) had no effect on the corrupted
+     * rabbit_ip because of this bug -- the stale file's zeroed rabbit_ip
+     * got loaded into app->settings regardless of the version check
+     * correctly rejecting it moments later. Now reads into a local
+     * scratch buffer first and only copies to `out` if validation
+     * actually passes -- a rejected file no longer touches the caller's
+     * struct at all. */
+    n = lfs_file_read(lfs, &f, &tmp, sizeof(tmp));
     lfs_file_close(lfs, &f);
 
-    if (n != (lfs_ssize_t)sizeof(*out)) {
+    if (n != (lfs_ssize_t)sizeof(tmp)) {
         return 0;
     }
 
-    return settings_store_validate(&hdr, out, sizeof(*out));
+    if (!settings_store_validate(&hdr, &tmp, sizeof(tmp))) {
+        return 0;
+    }
+
+    *out = tmp;
+    return 1;
 }
 
 int settings_store_save(lfs_t *lfs, const device_settings_t *settings)

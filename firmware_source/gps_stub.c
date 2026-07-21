@@ -29,10 +29,10 @@ void gps_configure_timepulse(void)
     neo_m8t_configure_timepulse(&s_gps_transport, systick_ms_now);
 }
 
-void gps_update_signal_status(void)
+void gps_update_signal_status(int *out_raw_sats, int *out_status)
 {
     ensure_transport();
-    (void)neo_m8t_update_signal_status(&s_gps_transport, systick_ms_now);
+    (void)neo_m8t_update_signal_status(&s_gps_transport, systick_ms_now, out_raw_sats, out_status);
 }
 
 int gps_sync_time_from_fix(rtc_datetime_t *out_time, int time_zone_hours, int add30)

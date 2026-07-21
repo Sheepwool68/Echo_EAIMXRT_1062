@@ -1,0 +1,548 @@
+/*
+   Copyright (c) 2020 RFID Race Timing Systems
+*/
+
+
+
+/* START LIBRARY DESCRIPTION *********************************************
+NEOM8T.LIB
+
+  Library implementing SPI on serial port
+  PC0 = MOSI
+  PC1 = MISO
+  PE3 = CLK
+  PB5 = Select Chip (for NEO)
+
+
+
+             API Functions:
+           		SetGPSTimeFromPPS
+               SetTimeFromGPS
+               GetCoordsFromGPS
+
+
+
+              This library was programmed  by:
+               ANDREW PETERSON
+
+END DESCRIPTION *********************************************************/
+
+/*** BeginHeader */
+unsigned long		iGPSTick; // Increment by one every time the ISR runs. So current time is always iGPSTime + iGPSTick
+unsigned long 		iGPSTimeFromRabbit;    //snapshot of MS_TIMER on PPS. Used to calculate exact second change.
+unsigned long     iStartTick;
+
+typedef struct uBlox
+{
+   char status;   //correct time fix
+   int year;
+   char month;
+   char day;
+   char hours;
+   char minutes;
+   char seconds;
+   int sats;
+   long int lat;
+   long int lon;
+
+};
+
+struct uBlox u_data;
+
+
+/*** EndHeader */
+
+
+/*** BeginHeader my_isr */
+void my_isr();
+/*** EndHeader */
+
+nodebug root interrupt void my_isr()
+{
+   iGPSTimeFromRabbit = MS_TIMER;
+   time_diff_pps = iGPSTimeFromRabbit - iDSTimeFromRabbit;
+   //if(!set_time) if( time_diff_pps > 502 || time_diff_pps < 498) SetDSTime();
+   iGPSTick++;
+   pps = pps^1;
+   //update_display_time = 1;
+}
+
+//------------------------------------------------------------------------
+// Milli-sec delay function
+//------------------------------------------------------------------------
+
+/*** BeginHeader msDelay */
+void msDelay(unsigned int delay);
+/*** EndHeader */
+
+nodebug void msDelay(unsigned int delay)
+{
+	auto unsigned long done_time;
+
+	done_time = MS_TIMER + delay;
+   while( (long) (MS_TIMER - done_time) < 0 );
+}
+
+
+//as used by the ublox in the Joey
+
+/*** BeginHeader NMEA */
+void NMEA(long lat, long lon);
+/*** EndHeader */
+
+void NMEA(long lat, long lon)
+{
+   int degrees,minutes;
+	long fractional, seconds;
+   char LatN, LonN;
+   float minsecs;
+   int i;
+
+	memset(GPSCoords,0x00,35);
+	degrees = abs(lat/10000000);
+   if(lat<0){
+   	LatN = 'S';
+   }else{
+   	LatN = 'N';
+   }
+   fractional = lat % 10000000;
+   if(fractional < 0) fractional = fractional * -1;
+   //-320562786 = 32.0562786 S
+   minsecs = (float)fractional/10000000*60;
+   minutes = (int) minsecs;
+   seconds = (unsigned long)((minsecs - minutes)*100000);
+   sprintf(GPSCoords, "%02d%02d.%05ld,%c", degrees, minutes, seconds, LatN);
+   degrees = abs(lon/10000000);
+   if(lon<0){
+   	LonN = 'W';
+   }else{
+   	LonN = 'E';
+   }
+   fractional = lon % 10000000;
+   if(fractional < 0) fractional = fractional * -1;
+   //-320562786 = 32.0562786 S
+   minsecs = (float)fractional/10000000*60;
+   minutes = (int) minsecs;
+   seconds = (unsigned long)((minsecs - minutes)*100000);
+   i = strlen(GPSCoords);
+   sprintf(&GPSCoords[i], ",%03d%02d.%05ld,%c", degrees, minutes, seconds, LonN);
+   printf("%s\r\n", GPSCoords);
+
+}
+
+
+
+
+//if we need to convert to this format
+/*** BeginHeader DD_DMS */
+void DD_DMS(long lat, long lon);
+/*** EndHeader */
+
+void DD_DMS(long lat, long lon)
+{
+	int degrees;
+	long fractional;
+   char LatN, LonN;
+   int i;
+
+	memset(GPSCoords,0x00,35);
+	degrees = abs(lat/10000000);
+   if(lat<0){
+   	LatN = 'S';
+   }else{
+   	LatN = 'N';
+   }
+   fractional = lat % 10000000;
+   if(fractional < 0) fractional = fractional * -1;
+	// -320562786 = 32.0562786 S
+
+	sprintf(GPSCoords, "%d.%07ld,%c", degrees, fractional, LatN);
+
+   degrees = abs(lon/10000000);
+   if(lon<0){
+   	LonN = 'W';
+   }else{
+   	LonN = 'E';
+   }
+   fractional = lon % 10000000;
+   if(fractional < 0) fractional = fractional * -1;
+   i = strlen(GPSCoords);
+	sprintf(&GPSCoords[i], ",%d.%07ld,%c", degrees, fractional, LonN);
+}
+
+
+//UBX message prep and sending. Message ID 0 is setting and ID 1 is getting.
+
+/*** BeginHeader process_UBX */
+int process_UBX(char *command, unsigned int length, int message_type);
+/*** EndHeader */
+
+int process_UBX(char *command, unsigned int length, int message_type)
+{
+
+	int i, crc_start;
+   int cka,ckb;
+   char ubx_response[2000];
+   char *s;
+   long timeOut;
+
+	//set timepulse correctly with UBX message
+	//do the CRC
+   /*
+   crc_start = 38;
+   length = 36;
+   */
+   memset(ubx_response,0,2000);
+   cka = 0;
+   ckb = 0;
+	for (i=2; i< (length - 2); i++){
+    	cka = cka + command[i];
+	 	ckb = ckb + cka;
+      cka = cka & 0xFF;
+      ckb = ckb & 0xFF;
+	}
+   command[length - 2] = cka;
+   command[length - 1] = ckb;
+	CS2_ENABLE;
+	msDelay(1);// on SPI there needs to be at least 10us between cs going lo and stream of bytes
+   SPIWrRd(command, &ubx_response, 2000);
+   CS2_DISABLE;
+   msDelay(1);
+   timeOut = MS_TIMER + 1100;
+   do
+   {
+      i=0;
+      s = ubx_response;
+      do
+      {
+            if (s[0] == 0xB5 && s[1] == 0x62 )
+         	{
+          		i = 2006;
+               if(message_type){
+               	if(s[2] == 0x01 && s[3] == 0x07 && s[4] == 0x5C){
+                  	u_data.lon = 0;
+                  	u_data.lon = (long int) s[33] << 24;
+                     //GPSCoords[0] = s[33];
+                  	u_data.lon += (long int)s[32] << 16;
+                     //GPSCoords[1] = s[32];
+                  	u_data.lon += (long int)s[31] << 8;
+                     //GPSCoords[2] = s[31];
+                  	u_data.lon += (long int)s[30];
+                     //GPSCoords[3] = s[30];
+                  	u_data.lat = 0;
+                  	u_data.lat = (long int) s[37] << 24;
+                     //GPSCoords[4] = s[37];
+                  	u_data.lat += (long int)s[36] << 16;
+                     //GPSCoords[5] = s[36];
+                  	u_data.lat += (long int)s[35] << 8;
+                     //GPSCoords[6] = s[35];
+                  	u_data.lat += (long int)s[34];
+                     //GPSCoords[7] = s[34];
+                     //DD_DMS(u_data.lat,u_data.lon);
+                     NMEA(u_data.lat,u_data.lon);
+                  	u_data.sats = s[29];
+                  	u_data.status = 0;
+
+                  	if((s[17] & 7 == 7) && (s[26]>0) && (s[27] & 0x01 > 0)){
+                  	 	u_data.status = 1; //valid date, time, sec and fixes
+                  	}
+                  	u_data.year = s[10] | s[11] << 8;
+                  	u_data.month = s[12];
+                  	u_data.day = s[13];
+                  	u_data.hours = s[14];
+                  	u_data.minutes = s[15];
+                  	u_data.seconds = s[16];
+
+               	//will be given bytes of info to process
+                  	printf("dlay %ld valid %d fix %d status %d sats %d date %d-%d-%d time %d:%d:%d\n\r", MS_TIMER - timeOut, s[17], s[26], s[27], s[29], s[13], s[12],
+                    (s[10] | s[11] << 8), s[14], s[15], s[16]);
+               		return 1;
+                  }
+               }else{
+               	if (s[3] == 0x01){
+                  	//printf("delay %d\n\r", MS_TIMER - timeOut);
+                     return 1;
+                  }
+               	if (s[3] == 0x00) return 0;
+               }
+         	}else{
+         		s++;
+               i++;
+            }
+      }while (i <2000);
+      CS2_ENABLE;
+		msDelay(1);// on SPI there needs to be at least 10us between cs going lo and stream of bytes
+      SPIRead(&ubx_response,2000);
+		CS2_DISABLE;
+   	msDelay(1);
+      //printf("next spi read\n\r");
+      if((long)MS_TIMER - timeOut > 0) {
+       	i=1006;  //give 2 sec max to exit loop
+         printf("timeout waiting for UBX response\n\r");
+         return 0;
+      }
+   }while (i<2001);
+
+}
+
+
+
+//UBX command messages to setup uBlox on startup only
+/*** BeginHeader set_UBX */
+void set_UBX();
+/*** EndHeader */
+
+void set_UBX()
+{
+
+	static char ubx_tp5[40] = {0xB5,0x62,0x06,0x31,0x20,0x00,
+   0x00,0x01,0x00,0x00,0x32,0x00,0x00,0x00,
+   0x40,0x42,0x0F,0x00,0x40,0x42,0x0F,0x00,
+   0x00,0x00,0x00,0x00,0xA0,0x86,0x01,0x00,
+   0x00,0x00,0x00,0x01,0xF7,0x00,0x00,0x00,     //changed b4 0xF7 from 0x00 to 0x01
+   0x00,0x00};
+   //char ubx_tp5[8] = {0xB5,0x62, 0x06, 0x31, 0x00, 0x00, 0x00, 0x00};
+   //char ubx_command[8] = { 0xB5,0x62,0x0A,0x04,0x00,0x00,0x0E,0x34 };
+   static char ubx_gnss[68] = {0xB5,0x62,0x06,0x3E,0x3C,0x00,0x00,0x20,0x20,0x07,
+   	0x00,0x08,0x10,0x00,0x01,0x00,0x01,0x01,
+      0x01,0x01,0x03,0x00,0x00,0x00,0x01,0x01,
+		0x02,0x04,0x08,0x00,0x00,0x00,0x01,0x01,
+		0x03,0x08,0x10,0x00,0x00,0x00,0x01,0x01,
+		0x04,0x00,0x08,0x00,0x00,0x00,0x01,0x03,
+		0x05,0x00,0x03,0x00,0x01,0x00,0x01,0x05,
+		0x06,0x08,0x0E,0x00,0x00,0x00,0x01,0x01,
+		0x00,0x00};
+	static char ubx_nav5[44] = {0xB5,0x62,0x06,0x24,0x24,0x00,
+0xFF,0xFF,0x02, 0x03, 0x00, 0x00, 0x00, 0x00,
+0x10, 0x27,0x00, 0x00, 0x05, 0x00, 0xFA, 0x00,
+0xFA, 0x00, 0x64, 0x00, 0x5E, 0x01, 0x00, 0x3C,
+0x00, 0x00,0x00, 0x00, 0x00, 0x00, 0x03, 0x00,
+0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+   static char ubx_pm2[56] = {0xB5,0x62,0x06,0x3B,0x30, 0x00,
+0x02, 0x06, 0x00, 0x00, 0x00, 0x14, 0x42, 0x01,
+0xE8, 0x03, 0x00, 0x00, 0x10, 0x27, 0x00, 0x00,
+0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+0x2C, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+0x00, 0x00};
+
+	static char ubx_navx5[48] = {0xB5,0x62,0x06,0x23,0x28, 0x00,
+0x02, 0x00, 0xFF, 0xFF, 0x3F, 0x02, 0x00, 0x00,
+0x03, 0x02, 0x01, 0x20, 0x09, 0x00, 0x00, 0x01,
+0x00, 0x00, 0x4B, 0x07, 0x00, 0x01, 0x00, 0x00,
+0x01, 0x01, 0x00, 0x00, 0x00, 0x64, 0x64, 0x00,
+0x00, 0x01, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00,
+0x00, 0x00};
+
+//char ubx_prt[9] = {0xB5,0x62,0x06,0x00,0x01,0x00,0x04,0x00,0x00};
+
+   static char ubx_prt[28] = {0xB5,0x62,0x06,0x00,0x14,0x00,
+0x04,0x00,0x00,0x00,0x00,0x32,0x00,0x00,
+0x00,0x00,0x00,0x00,0x01,0x00,0x01,  //this byte 0x03 changed to 0x01 to turn off NMEA out
+0x00,0x00,0x00,0x00,0x00,0x5A,0xD0};
+
+/*
+   char ubx_msg[11] = {0xB5,0x62,0x06,0x01,0x03,0x00,
+0x01,0x07,0x02,0x00,0x00};
+
+
+char ubx_pm2[8] = {0xB5,0x62,0x06,0x3B,0x00, 0x00, 0x00, 0x00};
+char ubx_tp5[8] = {0xB5,0x62, 0x06, 0x31, 0x00, 0x00, 0x00, 0x00};
+char ubx_gnss[8] = { 0xB5,0x62,0x06,0x3E,0x00,0x00,0x00,0x00 };
+char ubx_navx5[8] = {0xB5,0x62,0x06,0x23,0x00, 0x00, 0x00,0x00};
+char ubx_nav5[8] = {0xB5,0x62,0x06,0x24,0x00,0x00 ,0x00,0x00};
+
+
+//char ubx_rst1[12] = {0xB5,0x62,0x06,0x04,0x04,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
+//char ubx_rst2[12] = {0xB5,0x62,0x06,0x04,0x04,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
+*/
+
+
+   char *s;
+	int i, length;
+
+   /*s = ubx_mon_hw;
+   if(process_UBX(s, 8)) printf("UBX ACK\n\r");
+   */
+   s = ubx_pm2;
+   if(process_UBX(s, sizeof(ubx_pm2), 0)) printf("UBX ACK pm2\n\r");
+   s = ubx_navx5;
+   if(process_UBX(s, sizeof(ubx_navx5), 0)) printf("UBX ACK navx5\n\r");
+   s = ubx_nav5;
+   if(process_UBX(s, sizeof(ubx_nav5), 0)) printf("UBX ACK nav5\n\r");
+   s = ubx_tp5;
+   if(process_UBX(s, sizeof(ubx_tp5), 0)) printf("UBX ACK tp5\n\r");
+   s = ubx_gnss;
+	if(process_UBX(s, sizeof(ubx_gnss), 0)) printf("UBX ACK gnss\n\r");
+   s = ubx_prt;
+	if(process_UBX(s, sizeof(ubx_prt), 0)) printf("UBX ACK prt\n\r");
+   //s = ubx_msg;
+	//if(process_UBX(s, sizeof(ubx_msg), 0)) printf("UBX ACK msg\n\r");
+
+}
+
+
+
+/*** BeginHeader PVT_report */
+char PVT_report(void);
+/*** EndHeader */
+
+char PVT_report(void)
+{
+   char ubx_pvt[8] = {0xB5,0x62,0x01,0x07,0x00,0x00,0x00,
+   0x00};
+   char *s;
+	int i, length;
+   char result;
+
+
+   s = ubx_pvt;
+   result = process_UBX(s, sizeof(ubx_pvt), 1);
+   if(result) printf("UBX ACK pvt\n\r");
+   return result;
+
+
+}
+
+
+/*** BeginHeader GetGPS_Signal */
+int GetGPS_Signal(void);
+/*** EndHeader */
+
+int GetGPS_Signal (void)
+{
+	//int i, n, j;
+   //char *p[1000];
+   //char *s;
+   //char sats[2];
+
+   int sats;
+
+      if(PVT_report()){
+      	sats = u_data.sats *= 7;
+      	if(sats > 100) sats = 100;
+      	genieWriteObject(GENIE_OBJ_TANK, GENIE_TANK_GPS, sats);
+      	genieWriteObject(GENIE_OBJ_LED, GENIE_LED_PPS, u_data.status);     //clear LED if lost pps signal
+      }
+      /*
+      CS2_ENABLE;
+      for(i=0;i<16;i++);  //delay for enable
+      msDelay(1); // on SPI there needs to be at least 10us between cs going lo and stream of bytes
+      memset(p, 0x00, 1000);
+   	SPIRead(&p, 1000);
+      CS2_DISABLE;
+      msDelay(1); // on SPI there needs to be at least 10us between cs going lo and stream of bytes
+      s = p;
+      //$xxGSV,numMsg,msgNum,numSV{,svid,elv,az,cno},signalId*cs<CR><LF>
+      //$GPGSV,3,1,09,09,,,17,10,,,40,12,,,49,13,,,35,1*6F
+      i = 0;
+      do
+      {
+         if (s[0] == 0x24 && s[1] == 0x47 && s[2] == 0x50 && s[3] == 0x47 && s[4] == 0x53 && s[5] == 0x56)           //$GPGSV............
+         {
+            j = 0;
+            do { s++; } while (s[0] != 0x2C); // Step over $GPGSV
+            do { s++; j++; } while (s[0] != 0x2C);
+            do { s++; j++; } while (s[0] != 0x2C);
+            s++;
+            //now at the number of satellites seen     XX,
+            memcpy(sats, s,2);
+            j = atoi(sats);
+            j=j*7;
+            if(j > 100) j = 100;
+            genieWriteObject(GENIE_OBJ_TANK, GENIE_TANK_GPS, j);
+
+            return j;
+         }
+         s++;
+         i++;
+      } while (i < 1000);
+
+     */
+   return sats;
+
+}
+
+
+
+/*** BeginHeader SetTime_uBlox */
+void SetTime_uBlox(void);
+/*** EndHeader */
+
+void SetTime_uBlox(void)
+{
+   long iTime;
+   long TimeoutTime;
+   char bTimeSet;
+   char sats;
+   int extra_second;
+
+   bTimeSet = 0;
+   extra_second = 0;
+
+   //WrPortI(I0CR, &I0CRShadow, 0x00); // Stops PPS interupt
+   //printf("Setting Time\n");
+	if(!PVT_report()) return;
+   iStartTick = iGPSTick;
+	//now have latest GPS time read into structure
+
+
+   //WrPortI(I0CR, &I0CRShadow, 0x09); // Starts PPS interupt
+   TimeoutTime = MS_TIMER + 2000;
+   do
+   {
+   	if ((long)MS_TIMER - TimeoutTime > 0)   //should be in less than 2000
+      {
+      	printf("Timeout: No PPS signal\n");
+      	break;
+      }
+      if (iStartTick < iGPSTick && u_data.status )
+      {
+         //WrPortI(I0CR, &I0CRShadow, 0x00); // Stops PPS interupt
+         //apply the timezone and add30 use dynamic C to calculate new seconds since 1/1/1980
+         extra_second = iGPSTick - 1 - iStartTick;
+
+         CurTime.tm_mday = u_data.day;
+   		CurTime.tm_mon = u_data.month;
+   		CurTime.tm_year = u_data.year-1900;
+   		CurTime.tm_wday = 0;
+   		CurTime.tm_hour = u_data.hours;
+   		CurTime.tm_min = u_data.minutes;
+   		CurTime.tm_sec = u_data.seconds;
+         //apply the timezone, add30 plus 1 sec to use dynamic C to calculate new seconds since 1/1/1980
+         iTime = mktime(&CurTime) + ((unsigned long)Settings.TimeZone * 3600) + (Settings.Add30 * 1800) + extra_second;
+         iDSTimeFromRabbit = MS_TIMER;
+         mktm(&CurTime, iTime);
+         mytime->hours   = CurTime.tm_hour;
+  			mytime->minutes = CurTime.tm_min;
+  			mytime->seconds = CurTime.tm_sec;
+  			mytime->dow     = CurTime.tm_wday + 1;     //DS day 1 is Sunday, GPS is 0
+  			mytime->day     = CurTime.tm_mday;
+  			mytime->month   = CurTime.tm_mon;
+  			mytime->year    = CurTime.tm_year - 100;    //DS is 2000, GPS is 1900
+         RTC_Set(mytime);
+         tm_wr(&CurTime);
+         bTimeSet = 1;
+         set_time = 1;
+      	printf("Time has been set\n");
+	      printf("new: %d:%d:%d\n",CurTime.tm_hour,CurTime.tm_min,CurTime.tm_sec);;
+         u_data.sats *= 7;
+      	if(u_data.sats > 100) u_data.sats = 100;
+      	genieWriteObject(GENIE_OBJ_TANK, GENIE_TANK_GPS, u_data.sats);
+      }
+   }while (bTimeSet == 0);
+  	printf("Out of loop\n");
+
+   if (iStartTick == iGPSTick)
+   {
+		printf("No PPS signal seen after first pulse\n");
+
+   }
+
+}
+
+
+
+

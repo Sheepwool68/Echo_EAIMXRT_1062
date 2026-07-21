@@ -103,7 +103,18 @@ void genie_attach_debugger(genie_display_t *g, void *user_ctx, genie_debugger_ha
 int genie_online(const genie_display_t *g);
 uint32_t genie_uptime(const genie_display_t *g);
 int genie_current_form(const genie_display_t *g);
-void genie_activate_form(genie_display_t *g, uint8_t form);
+/* Returns 1=ACK received (command confirmed applied), 0=explicit NAK,
+ * -1=no reply within genie_cmd_timeout OR display not detected yet
+ * (genie_write_object()'s own !display_detected guard) -- changed from
+ * void 2026-07-16 so callers that need to know whether a form change
+ * actually landed (not just that it was attempted) can check, instead
+ * of assuming success. See app_loop.c's boot-time MAIN-activation
+ * retry for the motivating case: silently discarding this return value
+ * meant a single missed ACK (display detected, but this specific write
+ * timed out) got marked "done" and never retried, leaving the screen
+ * stuck. All other call sites are unaffected -- discarding the return
+ * value is still valid C. */
+int genie_activate_form(genie_display_t *g, uint8_t form);
 void genie_recover(genie_display_t *g, uint8_t pulses);
 int genie_timeout(genie_display_t *g, uint32_t value);
 int genie_ping(genie_display_t *g);

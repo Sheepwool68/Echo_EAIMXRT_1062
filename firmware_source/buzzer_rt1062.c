@@ -49,3 +49,16 @@ void buzzer_off(void)
 {
     HAL_GpioSetOutput(BOARD_INITPINS_BUZZER_handle, 0u);
 }
+
+void buzzer_beep_n_blocking(int count)
+{
+    int i;
+    for (i = 0; i < count; i++) {
+        buzzer_on();
+        SDK_DelayAtLeastUs(50000U, SystemCoreClock);
+        buzzer_off();
+        if (i + 1 < count) {
+            SDK_DelayAtLeastUs(50000U, SystemCoreClock);
+        }
+    }
+}

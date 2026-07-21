@@ -54,7 +54,18 @@
  * per instruction, to get GPS working again; the nRF fw_version mystery
  * is still open, see project memory for the next angle to try (probably
  * the SPIS buffer-arming/readiness sequencing, not mode).
- */
+ *
+ * CURRENT STATE, 2026-07-18: the nRF fw_version mystery from above is
+ * RESOLVED -- real root causes were wrong CS setup timing (200us,
+ * scope-measured) and wrong clock speed (3.125MHz, scope-measured
+ * against the real Rabbit reference), not mode. The bus's STATIC config
+ * is now permanently Mode 0 (GPS's own native default, confirmed via
+ * the u-blox datasheet and empirically -- GPS never reliably ACKs at
+ * Mode 1 on this hardware). The nRF's Mode 1 requirement is handled
+ * per-transfer, entirely within this file -- see rt1062_transfer()'s
+ * own switch-in/switch-out calls just below. This supersedes the
+ * "REVERTED" note above; that whole-bus-Mode-2 approach is no longer
+ * how this works. */
 
 #include "nrf_spi_transport_rt1062.h"
 #include "peripherals.h" /* MCUXpresso Config Tools generated --
@@ -112,6 +123,44 @@ static void rt1062_cs_deassert(void *ctx)
     GPIO_PinWrite(NRF_CS_GPIO, NRF_CS_PIN, 1u);
 }
 
+/* PER-TRANSFER MODE SWITCH, added 2026-07-18. This bus's static config
+ * (`LPSPI3_config`, board/peripherals.c) is now permanently Mode 0 --
+ * the NEO-M8T GPS's own true native/default mode (confirmed both by the
+ * u-blox datasheet, which documents Mode 0 as the SPI default, and
+ * empirically: GPS only ever got real ACKs at Mode 0 all session). An
+ * earlier attempt tried a ONE-TIME bus-wide switch to Mode 1 (send
+ * GPS's own UBX-CFG-PRT first at Mode 0, then leave the whole bus at
+ * Mode 1 for the rest of boot) -- that got the nRF working but GPS's
+ * remaining messages still failed completely, proving GPS genuinely
+ * cannot tolerate Mode 1 on this hardware (unlike the real Rabbit
+ * reference, which apparently can). So Mode 1 is now the nRF's own,
+ * fully self-contained, PER-TRANSFER concern: switch in immediately
+ * before this transfer, switch back to Mode 0 (the bus's permanent
+ * default) immediately after -- GPS (a separate transport entirely,
+ * neo_m8t_transport_rt1062.c) never sees anything but Mode 0, at any
+ * point, ever. Uses the exact TCR-register-level mechanism already
+ * scope-verified working on 2026-07-14 for this same kind of runtime
+ * mode change (disable peripheral, rewrite ONLY the CPOL/CPHA bits,
+ * re-enable) -- confirmed bit positions against the real device header
+ * (LPSPI_TCR_CPOL_MASK=bit31, LPSPI_TCR_CPHA_MASK=bit30), matching the
+ * historically-confirmed TCR readback value from that investigation
+ * (0x40000007 = CPHA set, CPOL clear, FRAMESZ=7 -- i.e. Mode 1). */
+static void rt1062_switch_to_mode1(LPSPI_Type *base)
+{
+    LPSPI_Enable(base, false);
+    base->TCR = (base->TCR & ~(LPSPI_TCR_CPOL_MASK | LPSPI_TCR_CPHA_MASK))
+                | LPSPI_TCR_CPOL(0U) | LPSPI_TCR_CPHA(1U);
+    LPSPI_Enable(base, true);
+}
+
+static void rt1062_switch_to_mode0(LPSPI_Type *base)
+{
+    LPSPI_Enable(base, false);
+    base->TCR = (base->TCR & ~(LPSPI_TCR_CPOL_MASK | LPSPI_TCR_CPHA_MASK))
+                | LPSPI_TCR_CPOL(0U) | LPSPI_TCR_CPHA(0U);
+    LPSPI_Enable(base, true);
+}
+
 static int rt1062_transfer(void *ctx, const uint8_t *tx, uint8_t *rx, size_t len)
 {
     rt1062_nrf_hw_ctx_t *hw = (rt1062_nrf_hw_ctx_t *)ctx;
@@ -127,7 +176,10 @@ static int rt1062_transfer(void *ctx, const uint8_t *tx, uint8_t *rx, size_t len
      * outside the LPSPI peripheral now via cs_assert()/cs_deassert(). */
     xfer.configFlags = kLPSPI_MasterPcsContinuous;
 
+    rt1062_switch_to_mode1(hw->base);
     status = LPSPI_MasterTransferBlocking(hw->base, &xfer);
+    rt1062_switch_to_mode0(hw->base);
+
     return (status == kStatus_Success) ? 0 : -1;
 }
 

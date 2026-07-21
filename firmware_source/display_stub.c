@@ -14,10 +14,26 @@
 static genie_display_t s_genie;
 static genie_transport_t s_genie_transport;
 
+/* Was wired to genie_attach_debugger() (2026-07-16) to surface
+ * genie_display.c's per-state-transition debug strings ("Sending Read
+ * Form as Ping"/"Got Current Form" on every ~1250ms auto-ping cycle,
+ * plus bad-CRC/bad-byte warnings) over LPUART5, while display detection
+ * reliability was still an open question. REMOVED 2026-07-17, per
+ * explicit request -- display detection has long since been confirmed
+ * reliable (see project memory/CLAUDE.md), and the ping-cycle messages
+ * specifically were flooding the console during unrelated (UHF reader)
+ * debugging. `s_genie` is zero-initialized (static), so
+ * `user_debugger_handler` defaults to NULL and every call site in
+ * genie_display.c already NULL-checks it before calling -- safe to
+ * simply not attach one. Re-attach via genie_attach_debugger() if
+ * display-link issues need this visibility again. */
 int display_init(void)
 {
+    int detected;
+
     s_genie_transport = genie_transport_rt1062_init();
-    return genie_begin(&s_genie, &s_genie_transport);
+    detected = genie_begin(&s_genie, &s_genie_transport);
+    return detected;
 }
 
 void display_do_events(void)
@@ -25,14 +41,19 @@ void display_do_events(void)
     genie_do_events(&s_genie);
 }
 
+int display_is_online(void)
+{
+    return genie_online(&s_genie);
+}
+
 void display_show_splash(const char *msg)
 {
     genie_write_str(&s_genie, GENIE_SPLASH_STR, msg);
 }
 
-void display_activate_form(int form_id)
+int display_activate_form(int form_id)
 {
-    genie_activate_form(&s_genie, (uint8_t)form_id);
+    return genie_activate_form(&s_genie, (uint8_t)form_id);
 }
 
 void display_set_contrast(uint8_t level)
@@ -63,20 +84,19 @@ void display_set_4dbutton(genie_4dbutton_t button, int state)
     genie_write_object(&s_genie, GENIE_OBJ_4DBUTTON, (uint8_t)button, (uint16_t)state);
 }
 
-void display_set_digits(display_digits_t which, int value)
+int display_set_digits(genie_led_digits_t which, int value)
 {
-    uint8_t genie_index;
+    return genie_write_object(&s_genie, GENIE_OBJ_LED_DIGITS, (uint8_t)which, (uint16_t)value);
+}
 
-    switch (which) {
-    case DISPLAY_DIGITS_MIN:     genie_index = GENIE_DLED_MIN;  break;
-    case DISPLAY_DIGITS_HOUR:    genie_index = GENIE_DLED_HOUR; break;
-    case DISPLAY_DIGITS_SEC:     genie_index = GENIE_DLED_SEC;  break;
-    case DISPLAY_DIGITS_READS:   genie_index = GENIE_DLED_READS;break;
-    case DISPLAY_DIGITS_BATTERY: genie_index = GENIE_DLED_BAT;  break;
-    default:
-        return;
-    }
-    genie_write_object(&s_genie, GENIE_OBJ_LED_DIGITS, genie_index, (uint16_t)value);
+void display_set_trackbar(genie_trackbar_t trackbar, int value)
+{
+    genie_write_object(&s_genie, GENIE_OBJ_TRACKBAR, (uint8_t)trackbar, (uint16_t)value);
+}
+
+void display_set_slider(genie_slider_t slider, int value)
+{
+    genie_write_object(&s_genie, GENIE_OBJ_SLIDER, (uint8_t)slider, (uint16_t)value);
 }
 
 void display_set_string(genie_string_t field, const char *value)
@@ -84,9 +104,19 @@ void display_set_string(genie_string_t field, const char *value)
     genie_write_str(&s_genie, (uint8_t)field, value);
 }
 
+void display_set_string_index(genie_string_t field, int value)
+{
+    genie_write_object(&s_genie, GENIE_OBJ_STRINGS, (uint8_t)field, (uint16_t)value);
+}
+
 void display_set_gauge(genie_gauge_t gauge, int percent)
 {
     genie_write_object(&s_genie, GENIE_OBJ_GAUGE, (uint8_t)gauge, (uint16_t)percent);
+}
+
+void display_set_knob(genie_knob_t knob, int percent)
+{
+    genie_write_object(&s_genie, GENIE_OBJ_KNOB, (uint8_t)knob, (uint16_t)percent);
 }
 
 void display_set_tank(genie_tank_t tank, int percent)

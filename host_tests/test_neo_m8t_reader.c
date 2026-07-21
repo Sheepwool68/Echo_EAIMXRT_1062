@@ -118,8 +118,11 @@ static void test_signal_status_scales_and_caps_at_100(void) {
     fill_nav_pvt_response(m.canned_response, 2024, 1, 1, 0, 0, 0, 0x07, 3, 0x01, 20, 0, 0);
     m.have_canned_response = 1;
 
-    int sats_pct = neo_m8t_update_signal_status(&t, fake_now_ms);
+    int raw_sats = -99, status = -99;
+    int sats_pct = neo_m8t_update_signal_status(&t, fake_now_ms, &raw_sats, &status);
     assert(sats_pct == 100);
+    assert(raw_sats == 20); /* uncapped raw count, distinct from the scaled/capped tank value */
+    assert(status == 1);
 
     printf("test_signal_status_scales_and_caps_at_100 OK\n");
 }
@@ -133,7 +136,7 @@ static void test_signal_status_uncapped(void) {
     fill_nav_pvt_response(m.canned_response, 2024, 1, 1, 0, 0, 0, 0x07, 3, 0x01, 5, 0, 0);
     m.have_canned_response = 1;
 
-    int sats_pct = neo_m8t_update_signal_status(&t, fake_now_ms);
+    int sats_pct = neo_m8t_update_signal_status(&t, fake_now_ms, NULL, NULL);
     assert(sats_pct == 35);
 
     printf("test_signal_status_uncapped OK\n");
@@ -146,8 +149,11 @@ static void test_signal_status_poll_failure_returns_negative(void) {
     reset_clock_and_tick();
     m.have_canned_response = 0;
 
-    int result = neo_m8t_update_signal_status(&t, fake_now_ms);
+    int raw_sats = -99, status = -99;
+    int result = neo_m8t_update_signal_status(&t, fake_now_ms, &raw_sats, &status);
     assert(result == -1);
+    assert(raw_sats == -1); /* out-params also report failure, not left uninitialized */
+    assert(status == -1);
 
     printf("test_signal_status_poll_failure_returns_negative OK\n");
 }

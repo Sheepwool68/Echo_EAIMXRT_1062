@@ -5,6 +5,14 @@
  */
 
 #include "tcp_session.h"
+#include "debug_console_rt1062.h"
+
+/* PRINTF redirect to LPUART5 -- added 2026-07-21 for the connect-greeting
+ * send tracing below (TEMPORARY DIAGNOSTIC), see that call site's own
+ * comment. host_tests/Makefile's test_tcp_session_EXTRA pulls in the
+ * debug_console_stub.c stub so this still links on the host. */
+#undef PRINTF
+#define PRINTF debug_printf
 
 #define GREETING_BUF_SIZE 64
 #define STATUS_BUF_SIZE   32
@@ -33,13 +41,24 @@ tcp_session_event_t tcp_session_process(const tcp_socket_transport_t *t,
         char status[STATUS_BUF_SIZE];
         int n;
 
+        /* TEMPORARY DIAGNOSTIC, added 2026-07-21 per explicit report
+         * ("You are not sending the connected string on first socket
+         * connection") -- send()'s return value was never checked here,
+         * same gap already found and traced in process_nrf_spi()'s
+         * chip-read send. LSOC lighting confirms this branch genuinely
+         * runs (it's the same TCP_SESSION_NEWLY_CONNECTED event that
+         * drives the LED), so the open question is specifically whether
+         * these two sends succeed at the transport layer. Remove once
+         * this report is resolved. */
         n = pc_build_connect_greeting(last_time_sent, greeting, sizeof(greeting));
         if (n > 0) {
-            t->send(t->ctx, (const uint8_t *)greeting, (size_t)n);
+            int sent = t->send(t->ctx, (const uint8_t *)greeting, (size_t)n);
+            PRINTF("TCP connect greeting send: requested=%d actual=%d\r\n", n, sent);
         }
         n = pc_format_battery_status(batt_percent, status, sizeof(status));
         if (n > 0) {
-            t->send(t->ctx, (const uint8_t *)status, (size_t)n);
+            int sent = t->send(t->ctx, (const uint8_t *)status, (size_t)n);
+            PRINTF("TCP connect battery-status send: requested=%d actual=%d\r\n", n, sent);
         }
 
         session->client_connected = 1;

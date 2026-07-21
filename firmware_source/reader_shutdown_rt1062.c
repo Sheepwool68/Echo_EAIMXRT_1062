@@ -46,9 +46,17 @@ void reader_pwr_set(int enable)
 
 void reader_power_set(int enable)
 {
-    /* Both pins together, per explicit instruction -- never call the
-     * two primitives above independently for a real on/off
-     * transition. */
+    /* Was: reader_shutdown_set(enable); reader_pwr_set(enable); --
+     * REDUCED to READER_SHUTDOWN only, 2026-07-17, per explicit
+     * instruction: READER_PWR is now used to drive the button LED
+     * instead (see button_led_rt1062.c, which calls reader_pwr_set()
+     * directly for that) -- this particular board has no real
+     * reader-power-control circuit connected to that pin anyway ("This
+     * board... does not have reader power control. Future one will."),
+     * so writing it here for that original purpose was already moot.
+     * A future board WITH real reader power control would need this
+     * restored to writing both pins together again AND the LED moved
+     * off READER_PWR to a different pin -- same tradeoff already made
+     * for MODEM_PWR, see gprs_transport_rt1062.c. */
     reader_shutdown_set(enable);
-    reader_pwr_set(enable);
 }

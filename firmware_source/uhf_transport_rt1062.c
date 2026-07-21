@@ -48,9 +48,41 @@ static rt1062_uhf_ctx_t s_ctx;
  * buffer. Kept minimal (no parsing here) -- matches the ISR-does-
  * almost-nothing discipline used elsewhere in this port (see
  * ds3231_rt1062.c).
- * ---------------------------------------------------------------- */
+ *
+ * FOUND AND FIXED 2026-07-17, real root cause of "reading stalls after
+ * ~10 seconds, board otherwise alive" -- this ISR only ever checked/
+ * cleared kLPUART_RxDataRegFullFlag (RDRF), never
+ * kLPUART_RxOverrunFlag (OR, LPUART_STAT_OR_MASK). Per the SDK's own
+ * documented hardware behavior (fsl_lpuart.h), once OR sets ("new data
+ * is received before data is read from receive register"), the
+ * receiver stops transferring further data into the readable register
+ * -- meaning RDRF never asserts again until OR is explicitly cleared.
+ * Since this ISR was only ever entered via the RDRF interrupt (RIE),
+ * and RDRF can't assert while OR is held, an overrun was a permanent,
+ * self-sustaining deadlock: nothing left to ever re-enter this ISR and
+ * clear OR. A bigger nand_log flush (more flash program/erase time,
+ * PRIMASK disabled the whole time -- see mflash_drv.c) makes an
+ * overrun far more likely, since LPUART8's hardware receive register
+ * is only 1 byte deep and reader traffic keeps arriving the whole
+ * time interrupts are off -- matches the observed correlation between
+ * larger flushes and the stall exactly.
+ *
+ * Fixed two-part, both required together: (1) this ISR now also
+ * checks for and clears kLPUART_RxOverrunFlag before draining RDRF --
+ * the byte(s) that caused the overrun are unavoidably lost, but that's
+ * the correct trade-off against permanently losing ALL future
+ * reception; (2) rt1062_uhf_open() (below) now also enables
+ * kLPUART_RxOverrunInterruptEnable (ORIE), not just RDRF's RIE --
+ * without ORIE, an overrun with no accompanying new-RDRF-worthy byte
+ * would never even re-enter this ISR in the first place, since RDRF
+ * (the only previously-enabled interrupt source) is exactly what OR
+ * suppresses. */
 void LPUART8_IRQHandler(void)
 {
+    if (LPUART_GetStatusFlags(UHF_LPUART_BASE) & kLPUART_RxOverrunFlag) {
+        LPUART_ClearStatusFlags(UHF_LPUART_BASE, kLPUART_RxOverrunFlag);
+    }
+
     while (LPUART_GetStatusFlags(UHF_LPUART_BASE) & kLPUART_RxDataRegFullFlag) {
         uint8_t byte = LPUART_ReadByte(UHF_LPUART_BASE);
         size_t next_head = (s_ctx.rx_head + 1) % UHF_RX_RING_SIZE;
@@ -86,7 +118,14 @@ static int rt1062_uhf_open(void *ctx, uint32_t baud_rate)
     c->rx_head = 0;
     c->rx_tail = 0;
 
-    LPUART_EnableInterrupts(UHF_LPUART_BASE, kLPUART_RxDataRegFullInterruptEnable);
+    /* kLPUART_RxOverrunInterruptEnable added 2026-07-17 alongside the
+     * ISR fix above -- without it, an overrun with no accompanying new
+     * RDRF-worthy byte would never re-enter LPUART8_IRQHandler() at
+     * all, since RDRF (the only previously-enabled source) is exactly
+     * what an unaddressed overrun suppresses. See that ISR's own
+     * comment for the full story. */
+    LPUART_EnableInterrupts(UHF_LPUART_BASE,
+                             kLPUART_RxDataRegFullInterruptEnable | kLPUART_RxOverrunInterruptEnable);
     EnableIRQ(UHF_LPUART_IRQn);
 
     return 0;
@@ -97,9 +136,20 @@ static void rt1062_uhf_close(void *ctx)
     rt1062_uhf_ctx_t *c = (rt1062_uhf_ctx_t *)ctx;
     /* Was serEclose() -- referenced in the GENIE_SYSTEM touch-event
      * handler's UHF-off branch. Same shape as
-     * gprs_transport_rt1062.c's rt1062_gprs_close(). */
+     * gprs_transport_rt1062.c's rt1062_gprs_close(). Rabbit's serEclose
+     * is safe to call on a port that was never opened (matches the
+     * original calling it unconditionally on every switch away from
+     * UHF, regardless of whether Open_Reader() ever actually ran this
+     * session); LPUART_Deinit() is not -- a NULL/never-set base maps to
+     * kCLOCK_IpInvalid internally and hits an index<=7 assert in
+     * CLOCK_ControlGate(). Guard needed here, not in the caller, since
+     * this is the one place that knows whether open() ever ran. */
+    if (c->base == NULL) {
+        return;
+    }
     DisableIRQ(UHF_LPUART_IRQn);
     LPUART_Deinit(c->base);
+    c->base = NULL;
 }
 
 static int rt1062_uhf_write(void *ctx, const uint8_t *buf, size_t len)

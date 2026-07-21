@@ -55,8 +55,21 @@ typedef struct {
 
 static rt1062_genie_ctx_t s_ctx;
 
+/* Overrun handling added 2026-07-17 -- see uhf_transport_rt1062.c's
+ * LPUART8_IRQHandler() for the full story (found there first, this
+ * driver shares the identical gap): without checking/clearing
+ * kLPUART_RxOverrunFlag, an overrun permanently deadlocks RDRF (and
+ * therefore this whole ISR) since RDRF can't assert again while OR is
+ * held -- nothing left to ever re-enter this handler and clear it. A
+ * particularly plausible culprit for any past "display stopped
+ * responding" investigation in this project, given the Genie link's
+ * own continuous ~1250ms auto-ping traffic. */
 void LPUART2_IRQHandler(void)
 {
+    if (LPUART_GetStatusFlags(GENIE_LPUART_BASE) & kLPUART_RxOverrunFlag) {
+        LPUART_ClearStatusFlags(GENIE_LPUART_BASE, kLPUART_RxOverrunFlag);
+    }
+
     while (LPUART_GetStatusFlags(GENIE_LPUART_BASE) & kLPUART_RxDataRegFullFlag) {
         uint8_t byte = LPUART_ReadByte(GENIE_LPUART_BASE);
         size_t next_head = (s_ctx.rx_head + 1) % GENIE_RX_RING_SIZE;
@@ -131,7 +144,12 @@ genie_transport_t genie_transport_rt1062_init(void)
 
     s_ctx.base = GENIE_LPUART_BASE;
 
-    LPUART_EnableInterrupts(GENIE_LPUART_BASE, kLPUART_RxDataRegFullInterruptEnable);
+    /* kLPUART_RxOverrunInterruptEnable added 2026-07-17 alongside the
+     * ISR fix above -- without it, an overrun could never re-trigger
+     * this ISR to clear itself (RDRF, the only previously-enabled
+     * source, is exactly what an unaddressed overrun suppresses). */
+    LPUART_EnableInterrupts(GENIE_LPUART_BASE,
+                             kLPUART_RxDataRegFullInterruptEnable | kLPUART_RxOverrunInterruptEnable);
     EnableIRQ(GENIE_LPUART_IRQn);
 
     t.ctx = &s_ctx;

@@ -6,9 +6,6 @@
  *
  * NOT everything from the original's globals is here -- deliberately
  * excluded:
- *   - Touchscreen UI state (admin, enter_pin, keyboard_string, etc.)
- *     that's entirely driven by GENIE2.LIB's event handler, which
- *     isn't ported yet. Add these back alongside that port.
  *   - MP2731 battery-charger polling/control -- a distinct library
  *     never provided, referenced only incidentally in main()'s loop.
  *     batt_percent is kept as a plain field you can set from wherever
@@ -46,6 +43,60 @@ typedef struct {
     /* ---- Persisted settings ---- */
     device_settings_t settings;
     uint8_t mac_address[6];
+
+    /* 1 once enet_lwip_rt1062_init() succeeds, 0 otherwise (including
+     * whenever APP_ENABLE_TCP is off -- memset's 0 default is correct
+     * there too). Added 2026-07-16 alongside that function's new
+     * bounded-retry/non-fatal-failure behavior (see its own header
+     * comment) -- app_loop.c's per-iteration TCP/ENET poll block checks
+     * this before touching the netif/listeners, since none of them were
+     * ever set up if ENET init failed. */
+    int enet_available;
+
+    /* One-shot guard for trace_dhcp_lease_once() (app_loop.c) -- MOVED
+     * here from a `static` local, 2026-07-21, per explicit report ("not
+     * reinitialising the ethernet for DHCP when I turn DHCP on... it
+     * needs to show up"). A `static` local is one-shot for the entire
+     * program lifetime: it correctly fires once on the FIRST lease ever
+     * obtained after boot, but a `static` never re-arms, so toggling
+     * DHCP off then back on later in the same session (a fresh
+     * dhcp_start(), see enet_lwip_rt1062_apply_network_settings())
+     * would negotiate a real new lease that the Networking form's
+     * display would never learn about -- the one-shot had already
+     * fired once, permanently, for this boot. The original's own
+     * updateDIPA() (ACTIVERFID_V1.02_UHF.c) has no such limitation --
+     * it's a real callback that fires on every DHCP success, not just
+     * the first. Reset to 0 in app_genie_apply_network_settings()
+     * (app_genie_dispatch.c) every time network settings are (re)applied,
+     * so each new DHCP negotiation gets its own fresh "tell me when
+     * this lands" arm instead of firing at most once ever. */
+    int dhcp_lease_printed;
+
+    /* 1 once display_activate_form(GENIE_FORM_MAIN) has actually been
+     * sent while the display was confirmed online -- see app_loop.c's
+     * per-iteration retry logic and display_stub.h's display_is_online()
+     * doc comment. Added 2026-07-16 to close a real gap: app_init()'s
+     * own boot-time activate-MAIN call is one-shot and silently no-ops
+     * if the display wasn't detected yet at that exact moment (a real
+     * risk on a genuine cold power-up without a debug probe attached,
+     * where the display starts booting from scratch alongside the
+     * RT1062 rather than possibly already being warm from a prior
+     * probe-attached test) -- this flag lets the main loop retry once
+     * the display link actually comes up, instead of leaving the
+     * screen stuck on splash forever. */
+    int display_main_shown;
+
+    /* Last systick_ms_now() at which the app_loop.c retry above
+     * attempted display_activate_form(GENIE_FORM_MAIN), added
+     * 2026-07-16 alongside display_main_shown's success-only fix
+     * (display_activate_form() can time out -- genie_write_object()'s
+     * own up-to-1250ms ACK wait -- without display_detected ever
+     * becoming false again, so a failed attempt must not be retried on
+     * literally every single main-loop iteration; that would repeat
+     * the same "retry storm blocking the loop" class of bug already
+     * found and fixed once this session for GPS's PPS-triggered
+     * time-sync retries). Gates retries to a fixed cooldown instead. */
+    uint32_t display_main_retry_ms;
 
     /* ---- nRF52833 SPI link (Active/LF mode) ---- */
     nrf_spi_transport_t nrf_transport;
@@ -92,6 +143,14 @@ typedef struct {
     int set_time_nrf_pending;
     int trigger_time_flag;
     uint32_t ds_last_edge_ms;
+    int ds_rollover_seen; /* was `ds_rollover` (0 until the DS3231's first
+        1Hz tick since boot, nonzero forever after -- the original never
+        resets it back to 0). Sticky "time has been set at least once"
+        latch; gates whether UHF tag reads get processed (see
+        process_uhf_reading()'s use, matching TM_ProcessString's
+        `if(ds_rollover) TM_ProcessChip(...)`) so a read at boot -- before
+        the RTC has ticked, meaning the timestamp on the record would be
+        garbage -- is dropped instead of logged. */
 
     /* ---- UHF reader ---- */
     uhf_reader_t uhf;
@@ -100,6 +159,25 @@ typedef struct {
     uint32_t uhf_chip_count, uhf_unique_chips;
     int uhf_reading;
     int uhf_mode;
+    /* Was global `chipcode_display` (UHF_READER.LIB's TM_ProcessChip) --
+     * the chip code last WRITTEN to GENIE_TXPDR_STR, so the screen only
+     * gets a fresh genieWriteStr() when the read code actually changes,
+     * not on every single read of the same tag. Zero-initialized by
+     * app_init()'s memset(), matching the original's zero-initialized
+     * global -- a real first chip code of exactly 0 can't occur (see
+     * uhf_chip_array_add()'s own UHF_CHIP_IGNORED_ZERO_CODE handling). */
+    uint32_t chipcode_display;
+    /* Reassembly buffer for a UHF frame torn across two transport
+     * reads. See process_uhf_reading()'s own doc comment (app_loop.c)
+     * for the full story -- added 2026-07-17, per explicit report that
+     * a part message straddling two reads was silently lost before.
+     * Sized comfortably over the largest possible single frame
+     * (0xFF + a 1-byte length field + 7 bytes overhead = 262 bytes max
+     * for any AA-family/tag-read frame) -- uhf_process_buffer() never
+     * leaves more than one incomplete frame's worth of trailing bytes
+     * unconsumed, so this can never need to hold more than that. */
+    uint8_t uhf_carry_buf[512];
+    size_t uhf_carry_len;
     app_program_state_t program_state;
 
     /* ---- GPRS / remote ---- */
@@ -125,9 +203,47 @@ typedef struct {
     int send_data_to_port;
 
     /* ---- Misc timers ---- */
-    uint32_t last_beep_time_ms;
-    int beeps_pending; /* additional beep pulses queued after the current one finishes */
-    int buzzer_phase;  /* 0=idle, 1=on, 2=gap-before-next-pulse -- see app_loop.c's BUZZER_PHASE_* constants */
+    /* Continuous chip-read activity buzzer, added 2026-07-17 -- REPLACES
+     * the old app_beep()/app_beep_n()/buzzer_phase pulse-train machinery
+     * (removed the same day, having become fully dead code once this
+     * took over its only two live call sites -- the start/stop-reading
+     * beeps had already moved to buzzer_beep_n_blocking() earlier the
+     * same session, and this is the tag-read case, the last remaining
+     * caller). Per explicit report ("I want a fairly solid constant
+     * buzzer when there are this many chips being continuously read...
+     * timeout where the buzzer stops if not one chip is read after say
+     * 200ms") -- see uhf_event_cb()/process_uhf_read_buzzer() in
+     * app_loop.c for the actual state machine (turn on on a read if not
+     * already on; turn off once UHF_READ_BUZZER_TIMEOUT_MS has elapsed
+     * since the last one). uhf_last_read_ms is only meaningful while
+     * uhf_read_buzzer_on is set. */
+    uint32_t uhf_last_read_ms;
+    int uhf_read_buzzer_on;
+    /* Same mechanism, separate state, for Active/LF (nRF) chip reads --
+     * was `Beep()`/`LastBeepTime`/`BEEPDELAY` in comms_NRF()'s case 0x02
+     * (record_type==1 branch, `ACTIVERFID_V1.02_UHF.c` line 1113:
+     * `if(Settings.Beeper) Beep();`, one call per retrieved record) --
+     * a GENERIC mechanism in the original (one shared timer for every
+     * Beep() caller, UHF and Active/LF alike), unlike this port's
+     * UHF-specific process_uhf_read_buzzer(), which was purpose-built
+     * for a UHF-specific tuning request and never intended as a stand-in
+     * for the original's separate Active/LF beep call site -- that call
+     * site was never ported by ANY version of this port's buzzer code,
+     * old or new (see process_nrf_spi()'s retrieve branch, app_loop.c).
+     * Kept as separate fields/state (not merged into the uhf_* pair)
+     * so this fix can't regress the already hardware-confirmed UHF
+     * buzzer behavior. Reuses UHF_READ_BUZZER_TIMEOUT_MS (300ms) since
+     * that constant IS BEEPDELAY, the same original value, not a new
+     * UHF-specific one. */
+    uint32_t nrf_last_read_ms;
+    int nrf_read_buzzer_on;
+    /* Was global `toggle` (zero-initialized in program_init(), matches
+     * this field's memset() default) -- the button LED's blink phase
+     * while ProgramState==READING. See app_loop.c's DS3231 rollover
+     * block (was `if(ProgramState==READING){ BitWrPortI(PBDR,
+     * &PBDRShadow,toggle,6); toggle^=1; }`, ACTIVERFID_V1.02_UHF.c
+     * lines 3605-3607) -- added 2026-07-17 per explicit request. */
+    int button_led_blink_state;
     uint32_t last_touch_time_s;
     uint32_t check_interval_ms;
     uint32_t check_interval2_ms;
@@ -135,10 +251,45 @@ typedef struct {
     /* ---- Battery (charger library not provided) ---- */
     int batt_percent;
     int board_version; /* was the global board_vers -- see bms_init.h */
-    uint32_t last_touch_time_ms; /* was the original's implicit touch tracking, see process_beeper_and_dim() */
+    uint32_t last_touch_time_ms; /* was the original's implicit touch tracking, see process_display_events() */
     int screen_dimmed;
     int form_before_dim; /* captured via display_get_current_form() right
         before dimming, restored on wake instead of a fixed form */
+
+    /* ---- Touchscreen UI state (was myGenieEventHandler()'s globals) ---- */
+    int admin;          /* factory/PIN-gated features unlock */
+    int enter_pin;       /* mid-PIN-entry flag -- next KEYPAD Enter is
+        checked against the admin PIN rather than acted on directly */
+    char keyboard_string[32]; /* shared KEYBOARD+KEYPAD text-entry buffer.
+        Original's own cap checks (<29 for KEYBOARD, <21 for KEYPAD) bound
+        it but no explicit `char keyboard_string[N]` declaration was in
+        the pasted source -- 32 is an inferred safe size, not a confirmed
+        original constant. */
+    int last_winbutton;  /* which WinButton opened the current KEYBOARD/
+        KEYPAD form, so its Enter-key handler knows what the finished
+        string means. -1 = none (was implicitly 0 in the original, but
+        0 collides with the real GENIE_BUTTON_SETTINGS enum value here;
+        moot in practice since nothing reads this before a WinButton
+        press sets it first). */
+    int time_offset;     /* pending timezone delta (hours), set by the
+        TIMEZ trackbar, applied and reset to 0 by the FORM_MAIN refresh
+        (was updateGenie_Main()'s `if(time_offset<0 || time_offset>0)`
+        block) */
+    int diag_visible;    /* gates antenna/RSSI gauge display updates in
+        the original (UHF_READER.LIB: `if(diag_visible)
+        genieWriteObject(GENIE_OBJ_GAUGE, ...)`- this dispatcher only SETS
+        this field; wiring uhf_reader.c/app_loop.c's own gauge writes to
+        consult it is a separate, not-yet-done follow-up. */
+    int lo_backlight;     /* write-only from this dispatcher (Sleep-form
+        wake resets it to 0); its consumer -- a battery-percent-driven
+        backlight-reduction check in the original's separate periodic
+        battery-check loop -- isn't ported here either, same follow-up
+        note as diag_visible above. */
+    int new_firmware_avail; /* -1=error, 0=up to date, 1=update available;
+        drives GENIE_FW_PROGRESS_STR. Only ever populated by the stubbed
+        check-firmware path (see app_genie_dispatch.h) until that gets a
+        real HTTP-backed implementation. */
+    uint16_t new_fw_vers;   /* paired with the above */
 
 } app_context_t;
 
@@ -150,24 +301,22 @@ typedef struct {
 int app_init(app_context_t *app);
 
 /*
- * Was Beep(). Unconditionally turns the buzzer on and stamps
- * last_beep_time_ms -- matches the original exactly: Beep() itself has
- * no Settings.Beeper check, so gating on that setting is the CALLER's
- * job at whatever call site actually invokes this (not yet identified
- * from source -- see buzzer_rt1062.h). now_ms should be the same clock
- * reading app_run_one_iteration() already has for this iteration.
+ * Was ACTIVERFID_V1.02_UHF.c lines 3732-3742 (the checkInterval battery
+ * block) -- reads MAX17303_REG_REPSOC and scales it into app->batt_percent
+ * (no-op unless APP_ENABLE_BMS is on AND app->board_version>=32, see the
+ * implementation's own comment in app_loop.c for the full detail).
+ * Exposed here (rather than kept static in app_loop.c) so app_init()
+ * can call it once immediately, before the first display paint --
+ * added 2026-07-16 per explicit request that the battery bar/value
+ * show a real reading immediately, not wait for process_periodic_checks()'s
+ * first fire 2 seconds into the main loop. process_periodic_checks()
+ * itself now just calls this on its own repeat timer.
+ *
+ * Returns 1 if it actually ran (nRF SPI ready line not asserted -- see
+ * app_loop.c's definition for why this gate was restored 2026-07-20),
+ * 0 if skipped/deferred. Boot-time callers can ignore the return value.
  */
-void app_beep(app_context_t *app, uint32_t now_ms);
-
-/*
- * Queues `count` beep pulses (each BEEP_DELAY_MS long, BEEP_GAP_MS
- * apart -- see app_loop.c), gated on Settings.Beeper. This is where
- * the setting-check the original's individual call sites presumably
- * had around their own Beep() calls now lives -- not inside app_beep()
- * itself, matching Beep()'s own unconditional behavior. Confirmed call
- * sites: a tag read (1), starting reading (2), stopping reading (1).
- */
-void app_beep_n(app_context_t *app, uint32_t now_ms, int count);
+int app_update_battery_percent(app_context_t *app);
 
 /*
  * Was one pass through main()'s for(;;) body. Call repeatedly -- from

@@ -41,7 +41,14 @@
 #include "lwip/ip_addr.h"
 #include "systick_ms_rt1062.h"
 #include "ms_time.h"
+#include "debug_console_rt1062.h"
 #include <string.h>
+
+/* PRINTF redirect to LPUART5 -- added 2026-07-21 for the lw_send()
+ * window tracing below (TEMPORARY DIAGNOSTIC), see that call site's own
+ * comment. */
+#undef PRINTF
+#define PRINTF debug_printf
 
 #define RX_RING_SIZE 512 /* must match tcp_lwip_conn_t.rx_ring's declared size */
 
@@ -49,7 +56,7 @@
 /* Ring buffer helper (bridges async recv callback -> sync poll recv()) */
 /* ------------------------------------------------------------------ */
 
-static void ring_push(tcp_lwip_conn_t *c, const uint8_t *data, uint16_t len)
+static uint16_t ring_push(tcp_lwip_conn_t *c, const uint8_t *data, uint16_t len)
 {
     uint16_t i;
     for (i = 0; i < len; i++) {
@@ -57,12 +64,16 @@ static void ring_push(tcp_lwip_conn_t *c, const uint8_t *data, uint16_t len)
         if (next == c->rx_tail) {
             /* Ring full -- drop the remainder. Shouldn't happen if the
              * main loop drains recv() every iteration; flagged rather
-             * than silently growing a buffer we don't have RAM for. */
+             * than silently growing a buffer we don't have RAM for.
+             * Returns how many bytes actually made it in (was void --
+             * changed 2026-07-20, see conn_recv_cb()'s own comment for
+             * why the caller needs this count). */
             break;
         }
         c->rx_ring[c->rx_head] = data[i];
         c->rx_head = next;
     }
+    return i;
 }
 
 /* ------------------------------------------------------------------ */
@@ -84,12 +95,30 @@ static err_t conn_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t
     }
 
     {
+        /* FIXED 2026-07-20, found via review: was unconditionally
+         * calling tcp_recved(tpcb, p->tot_len) below regardless of
+         * whether ring_push() actually stored all of it. If the ring
+         * was full and silently dropped some bytes (its own documented,
+         * pre-existing behavior), telling lwIP "fully consumed, grow
+         * the window back up" for bytes that were actually just thrown
+         * away meant no backpressure ever reached the sender -- the
+         * SAME overflow could keep recurring under any sustained burst
+         * exceeding what the main loop drains per iteration, silently
+         * corrupting whatever PC command/data stream was mid-flight,
+         * with nothing anywhere indicating data was lost. Now only acks
+         * what was actually buffered; the sender's advertised window
+         * shrinks accordingly, giving real TCP-level backpressure until
+         * the main loop drains the ring via recv(). The dropped bytes
+         * from THIS burst are still gone (nothing buffers them
+         * separately for a retry) -- this fixes the false "all good"
+         * signal, not retroactive recovery of already-discarded data. */
         struct pbuf *q;
+        uint16_t consumed = 0;
         for (q = p; q != NULL; q = q->next) {
-            ring_push(c, (const uint8_t *)q->payload, q->len);
+            consumed = (uint16_t)(consumed + ring_push(c, (const uint8_t *)q->payload, q->len));
         }
+        tcp_recved(tpcb, consumed); /* note 3 above */
     }
-    tcp_recved(tpcb, p->tot_len); /* note 3 above */
     pbuf_free(p);
     return ERR_OK;
 }
@@ -109,6 +138,21 @@ static err_t conn_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
     tcp_lwip_listener_t *listener = (tcp_lwip_listener_t *)arg;
     int i;
     (void)err;
+
+    /* REQUIRED whenever TCP_LISTEN_BACKLOG is enabled (it is -- see
+     * lwipopts.h, "Enable backlog", TCP_LISTEN_BACKLOG=1) -- added
+     * 2026-07-20, found via review (not a live-hardware symptom yet):
+     * lwIP tracks a pending-connection count against the LISTENING
+     * pcb's backlog limit, incremented internally when a SYN arrives.
+     * Without an explicit tcp_accepted() call here, that count is
+     * never decremented -- once enough connect/disconnect cycles have
+     * happened to exhaust the backlog (TCP_LWIP_MAX_CLIENTS, passed to
+     * tcp_listen_with_backlog() in tcp_lwip_listener_open()), lwIP
+     * silently refuses ALL further connection attempts, even from
+     * clients reconnecting after a previous one cleanly disconnected --
+     * a slow degradation that would be brutal to diagnose through
+     * repeated hardware reflash cycles rather than caught here. */
+    tcp_accepted((struct tcp_pcb *)listener->listen_pcb);
 
     for (i = 0; i < TCP_LWIP_MAX_CLIENTS; i++) {
         if (!listener->conns[i].alive) {
@@ -180,6 +224,24 @@ static int lw_send(void *ctx, const uint8_t *buf, size_t len)
         return -1;
     }
     tcp_output(pcb);
+
+    /* TEMPORARY DIAGNOSTIC, added 2026-07-21 per explicit report of
+     * "no data on the client" despite every send() call site reporting
+     * full success. tcp_sndbuf() (avail, above) only reflects OUR OWN
+     * local buffer capacity -- it says nothing about the PEER's
+     * currently advertised receive window (pcb->snd_wnd), which is what
+     * actually gates whether lwIP transmits new data onto the wire.
+     * tcp_write()/tcp_output() can both report success while lwIP
+     * silently withholds the segment because the peer's window is zero
+     * or too small -- a normal TCP flow-control mechanism, not a bug in
+     * this code, but invisible at every layer traced so far since none
+     * of them look at the peer's window. Logging it directly here to
+     * either confirm or rule this out. Remove once this report is
+     * resolved. */
+    PRINTF("lw_send: len=%u snd_wnd=%u snd_buf=%u unacked=%u unsent=%u\r\n",
+           (unsigned)len, (unsigned)pcb->snd_wnd, (unsigned)pcb->snd_buf,
+           (unsigned)(pcb->unacked != NULL), (unsigned)(pcb->unsent != NULL));
+
     return (int)len;
 }
 
@@ -260,10 +322,19 @@ void tcp_lwip_listener_poll_accept(tcp_lwip_listener_t *listener)
 /* ------------------------------------------------------------------ */
 
 static tcp_lwip_conn_t s_reset_conn;
+static struct tcp_pcb *s_reset_listen_pcb;
 
 static err_t reset_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
 {
     (void)arg; (void)err;
+
+    /* Same requirement as conn_accept_cb() above (TCP_LISTEN_BACKLOG=1)
+     * -- this listener's own pcb wasn't reachable via `arg` (tcp_arg()
+     * was never called on it, only on each accepted connection), so a
+     * dedicated static holds it instead, set in
+     * tcp_lwip_reset_socket_open() below. */
+    tcp_accepted(s_reset_listen_pcb);
+
     if (s_reset_conn.alive) {
         return ERR_MEM; /* already have a client -- matches the original's
                             single-reset-socket contract */
@@ -294,6 +365,7 @@ int tcp_lwip_reset_socket_open(tcp_socket_transport_t *out_transport, uint16_t p
         return -1;
     }
     tcp_accept(pcb, reset_accept_cb);
+    s_reset_listen_pcb = pcb;
 
     memset(&s_reset_conn, 0, sizeof(s_reset_conn));
 

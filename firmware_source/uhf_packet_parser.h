@@ -25,6 +25,10 @@
  * baked into this module. uhf_process_buffer() always parses and
  * reports tag-read events; your caller decides whether to act on them
  * based on its own time-sync status (see time_sync.h from this port).
+ * IMPLEMENTED, 2026-07-15: app_loop.c's uhf_event_cb() gates its
+ * UHF_FRAME_TAG_READ case on app->ds_rollover_seen (set once,
+ * permanently, by process_time_sync() on the DS3231's first rollover),
+ * matching the original's sticky ds_rollover check exactly.
  */
 
 #ifndef UHF_PACKET_PARSER_H

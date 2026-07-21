@@ -21,8 +21,15 @@ extern "C" {
 /* Was set_UBX() -- configures the NEO-M8T's timepulse output parameters. */
 void gps_configure_timepulse(void);
 
-/* Was GetGPS_Signal() -- updates satellite-count display/status. */
-void gps_update_signal_status(void);
+/*
+ * Was GetGPS_Signal() -- updates satellite-count display/status.
+ * out_raw_sats/out_status (either may be NULL): the raw numSV count
+ * and fix-validity status from the underlying poll -- see
+ * neo_m8t_update_signal_status()'s own doc comment. Added 2026-07-16
+ * for bring-up diagnostics (debug-UART satellite count/fix-status
+ * trace), independent of the Genie tank widget's scaled percentage.
+ */
+void gps_update_signal_status(int *out_raw_sats, int *out_status);
 
 /*
  * Was SetTime_uBlox() -- reads GPS time and calls SetDSTime() (the
