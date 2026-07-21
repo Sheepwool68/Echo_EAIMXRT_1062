@@ -52,7 +52,15 @@ tcp_session_event_t tcp_session_process(const tcp_socket_transport_t *t,
          * this report is resolved. */
         n = pc_build_connect_greeting(last_time_sent, greeting, sizeof(greeting));
         if (n > 0) {
-            int sent = t->send(t->ctx, (const uint8_t *)greeting, (size_t)n);
+            int sent;
+            /* TEMPORARY DIAGNOSTIC, added 2026-07-21 -- confirms the
+             * SOURCE buffer is correct (last byte really is 0x0a) right
+             * before it's handed to the transport, to rule in/out
+             * pc_build_connect_greeting() itself vs. something further
+             * down the send path silently dropping the trailing byte.
+             * Remove once this report is resolved. */
+            PRINTF("greeting source: n=%d last_byte=0x%02x\r\n", n, (unsigned char)greeting[n - 1]);
+            sent = t->send(t->ctx, (const uint8_t *)greeting, (size_t)n);
             PRINTF("TCP connect greeting send: requested=%d actual=%d\r\n", n, sent);
         }
         n = pc_format_battery_status(batt_percent, status, sizeof(status));
