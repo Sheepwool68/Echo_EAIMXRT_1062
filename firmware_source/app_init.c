@@ -509,6 +509,13 @@ int app_init(app_context_t *app)
      * after DS3231 setup in the original (both on the same I2C bus).
      * See bms_init.c for the byte-for-byte ported sequence. */
     bms_init(&app->board_version);
+    /* TEMPORARY DIAGNOSTIC, 2026-07-22, per explicit report ("V=0" over
+     * TCP, confirmed wrong -- battery is not actually at 0%) --
+     * app_update_battery_percent() (app_loop.c) is gated on
+     * board_version>=32; this confirms whether that gate is even
+     * passing. Remove once the real cause (gate failing vs. read
+     * failing vs. genuine gauge fault) is found. */
+    PRINTF("BMS: board_version=%d (need >=32 for battery reads)\r\n", app->board_version);
 #endif
 
 #if APP_ENABLE_BOARD_IO
