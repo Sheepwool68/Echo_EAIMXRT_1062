@@ -626,22 +626,22 @@ static void process_time_sync(app_context_t *app)
             }
 
             {
-                /* CORRECTED 2026-07-22, per explicit instruction -- was
-                 * `if(!BitRdPortI(PBDR,3)){ comms_NRF(0x08); set_time_nrf=0; }`,
-                 * gating this push on the nRF READY line reading "not
-                 * busy". Confirmed wrong, same reasoning as
-                 * app_update_battery_percent()'s own 2026-07-22 fix:
-                 * NRF_READY only ever means "poll the nRF for new chip
-                 * reads" (see process_nrf_spi()'s own use of it) -- it
-                 * isn't a general SPI-bus-busy signal, so nothing else
-                 * should gate on it. spi_bus_busy is always passed as 0
-                 * now (time_sync_maybe_push_nrf_time()'s own parameter/
-                 * contract kept as-is -- still a reasonable general
-                 * "defer if busy" API, just never actually busy from
-                 * this port's perspective). With APP_ENABLE_NRF_SPI off,
-                 * nrf_spi_send_datetime() below is compiled out anyway,
-                 * so passing 0 here is still safe either way. */
-                if (time_sync_maybe_push_nrf_time(&app->set_time_nrf_pending, 0)) {
+                /* was `if(!BitRdPortI(PBDR,3)){ comms_NRF(0x08); set_time_nrf=0; }` --
+                 * PBDR bit3 is now the nRF SPI ready/attention line,
+                 * read directly rather than through the poll/retrieve
+                 * dispatch below (this is a quick non-blocking peek,
+                 * not a full transaction). */
+#if APP_ENABLE_NRF_SPI
+                int spi_bus_busy = app->nrf_transport.read_ready_line(app->nrf_transport.hw_ctx);
+#else
+                int spi_bus_busy = 1; /* treat as always-busy with the
+                    link disabled, so time_sync_maybe_push_nrf_time()
+                    never fires and set_time_nrf_pending just stays set
+                    until this stage is enabled -- matches the spirit of
+                    "everything still runs, just inert" from the other
+                    staged bring-up flags. */
+#endif
+                if (time_sync_maybe_push_nrf_time(&app->set_time_nrf_pending, spi_bus_busy)) {
                     uint32_t nrf_time = rtc_datetime_to_nrf_time(&app->current_time);
 #if APP_ENABLE_NRF_SPI
                     nrf_spi_send_datetime(&app->nrf_transport, nrf_time);
@@ -1384,21 +1384,15 @@ static void process_remote(app_context_t *app, uint32_t now_ms)
  * there. */
 int app_update_battery_percent(app_context_t *app)
 {
-    /* CORRECTED 2026-07-22, per explicit instruction -- this used to defer
-     * whenever the nRF READY line was asserted ("don't let slow work delay
-     * draining a pending nRF read", ported faithfully from the original's
-     * own `if(!BitRdPortI(PBDR,3))` wrapping this exact block). Confirmed
-     * wrong: NRF_READY has nothing to do with the MAX17303 fuel-gauge I2C
-     * read -- it exists solely to tell this port when to poll the nRF chip
-     * for new chip reads, unrelated buses entirely. That gate was also the
-     * actual root cause of "V=0 forever" over TCP: this board's NRF_READY
-     * reads permanently asserted (see project memory), which silently
-     * blocked every battery read since the gate was restored 2026-07-20. */
+#if APP_ENABLE_NRF_SPI
+    if (app->nrf_transport.read_ready_line(app->nrf_transport.hw_ctx)) {
+        return 0; /* nRF has a pending read queued -- defer, matches original */
+    }
+#endif
 #if APP_ENABLE_BMS
     if (app->board_version >= 32) {
         uint16_t max_register;
-        int rc = max17303_read_reg(MAX17303_ADDR_MAIN, MAX17303_REG_REPSOC, &max_register);
-        if (rc == 0) {
+        if (max17303_read_reg(MAX17303_ADDR_MAIN, MAX17303_REG_REPSOC, &max_register) == 0) {
             float max_value = (float)max_register * (1.0f / 256.0f);
             max_value += 1.0f; /* "never seems to get to 100 so top it up 1" -- original's own comment */
             if (max_value > 100.0f) {
@@ -1416,11 +1410,13 @@ int app_update_battery_percent(app_context_t *app)
 static void process_periodic_checks(app_context_t *app, uint32_t now_ms)
 {
     if (now_ms > app->check_interval_ms) {
-        /* app_update_battery_percent() always returns 1 now (see its own
-         * 2026-07-22 correction comment -- no longer gated on nRF READY),
-         * so this always advances the interval on the pass it runs. */
-        app_update_battery_percent(app);
-        app->check_interval_ms = now_ms + BATTERY_CHECK_MS;
+        if (app_update_battery_percent(app)) {
+            app->check_interval_ms = now_ms + BATTERY_CHECK_MS;
+        }
+        /* else: nRF busy, retry next pass -- was the original's
+         * `if(!BitRdPortI(PBDR,3)){ ...; checkInterval = MS_TIMER + DELAY; }`,
+         * where checkInterval only advances on the same pass the read
+         * itself ran. */
     }
 
     /* Was `if(set_time){ if(...checkInterval2...){ GetGPS_Signal(); }}`
@@ -1437,20 +1433,26 @@ static void process_periodic_checks(app_context_t *app, uint32_t now_ms)
      * was observable anywhere before -- the Genie tank widget only
      * shows a scaled 0-100 bar, gated behind APP_ENABLE_DISPLAY, and
      * even then requires physically reading a bar's height).
-     * CORRECTED 2026-07-22, per explicit instruction -- the original's
-     * own `!BitRdPortI(PBDR,3)` gate around GetGPS_Signal() (restored
-     * 2026-07-20) is now removed, same reasoning as
-     * app_update_battery_percent()'s own 2026-07-22 fix: NRF_READY only
-     * means "poll the nRF for new chip reads" (see process_nrf_spi()'s
-     * own use of it), not a general bus-safety/scheduling-priority
-     * signal for unrelated GPS SPI work. checkInterval2 now always
-     * advances on the pass this runs. */
+     * RESTORED 2026-07-20 -- the original's own `!BitRdPortI(PBDR,3)`
+     * gate around GetGPS_Signal() itself (distinct from the set_time
+     * wrapper decoupled above, which stays decoupled per that explicit
+     * instruction) -- see app_update_battery_percent()'s doc comment
+     * for why this is believed to be scheduling priority, not a bus
+     * safety requirement. Same nesting as the original: checkInterval2
+     * only advances on the pass the check actually ran. */
 #if APP_ENABLE_GPS
     if (now_ms > app->check_interval2_ms) {
-        int raw_sats = -1, status = -1;
-        gps_update_signal_status(&raw_sats, &status);
-        PRINTF("GPS signal: %d sats, status=%d, pps=%d\r\n", raw_sats, status, app->pps);
-        app->check_interval2_ms = now_ms + GPS_SIGNAL_CHECK_MS;
+#if APP_ENABLE_NRF_SPI
+        int nrf_busy = app->nrf_transport.read_ready_line(app->nrf_transport.hw_ctx);
+#else
+        int nrf_busy = 0;
+#endif
+        if (!nrf_busy) {
+            int raw_sats = -1, status = -1;
+            gps_update_signal_status(&raw_sats, &status);
+            PRINTF("GPS signal: %d sats, status=%d, pps=%d\r\n", raw_sats, status, app->pps);
+            app->check_interval2_ms = now_ms + GPS_SIGNAL_CHECK_MS;
+        }
     }
 #endif
 }
