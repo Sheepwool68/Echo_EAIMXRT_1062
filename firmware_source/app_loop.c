@@ -246,10 +246,12 @@ static void process_data_sockets(app_context_t *app, uint32_t now_ms)
          * see the TODO already flagged in tcp_transport_lwip.c. */
     }
 
-    tcp_broadcast_status(app->tcp_listener.transports, app->tcp_listener.sessions,
-                          TCP_LWIP_MAX_CLIENTS, app->batt_percent,
-                          now_ms,
-                          STATUS_BROADCAST_MS, &app->last_status_broadcast_ms);
+    /* TEMPORARY 2026-07-21, per explicit request -- disabled for the
+     * same reason as tcp_session.c's connect-time battery-status send:
+     * testing the rebuilt TX path with just one message on connect and
+     * nothing else first. Restore this call once that's confirmed
+     * working. */
+    (void)now_ms;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1912,33 +1914,6 @@ void app_run_one_iteration(app_context_t *app)
         status broadcast interval, GPRS process interval, battery/GPS
         check intervals) was silently non-functional until this was wired
         in, not just "not yet implemented." */
-
-    /* TEMPORARY DIAGNOSTIC, added 2026-07-21 -- chasing "TCP sends never
-     * get ACKed" (lw_send()'s own trace shows snd_buf monotonically
-     * draining, never recovering) on the full port specifically, not
-     * reproducible on a bare ENET+lwIP-only test harness. Theory: some
-     * other subsystem in this loop (UHF/nRF SPI/GPS/Genie/BMS/storage)
-     * occasionally blocks long enough to starve enet_lwip_rt1062_poll()
-     * below, letting the small hardware RX descriptor ring fill and
-     * drop incoming ACKs before ethernetif_input() ever drains it --
-     * same class of bug already found and fixed multiple times on this
-     * project (Genie's 1250ms ACK wait, GPS's 1100ms UBX timeouts, the
-     * UHF LPUART overrun deadlock). Prints only when a loop iteration
-     * takes longer than LOOP_STALL_WARN_MS, so it should be silent on a
-     * healthy loop. Remove once this report is resolved. */
-    {
-        static uint32_t s_last_iter_ms;
-        static int s_have_last;
-        enum { LOOP_STALL_WARN_MS = 50 };
-        if (s_have_last) {
-            uint32_t elapsed = now_ms - s_last_iter_ms;
-            if (elapsed > LOOP_STALL_WARN_MS) {
-                ENET_PRINTF("loop stall: %u ms since last iteration\r\n", (unsigned)elapsed);
-            }
-        }
-        s_last_iter_ms = now_ms;
-        s_have_last = 1;
-    }
 
 #if APP_ENABLE_TCP
     /* Was entirely missing until 2026-07-14 -- the "board's ENET

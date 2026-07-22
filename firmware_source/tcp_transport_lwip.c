@@ -41,14 +41,7 @@
 #include "lwip/ip_addr.h"
 #include "systick_ms_rt1062.h"
 #include "ms_time.h"
-#include "debug_console_rt1062.h"
 #include <string.h>
-
-/* PRINTF redirect to LPUART5 -- added 2026-07-21 for the lw_send()
- * window tracing below (TEMPORARY DIAGNOSTIC), see that call site's own
- * comment. */
-#undef PRINTF
-#define PRINTF debug_printf
 
 #define RX_RING_SIZE 512 /* must match tcp_lwip_conn_t.rx_ring's declared size */
 
@@ -166,7 +159,12 @@ static err_t conn_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
             tcp_arg(newpcb, c);
             tcp_recv(newpcb, conn_recv_cb);
             tcp_err(newpcb, conn_err_cb);
-            tcp_nagle_disable(newpcb);
+            /* REMOVED 2026-07-21, full rebuild against the confirmed-clean
+             * reference test (which never calls this) -- tested in
+             * isolation earlier and made no difference either way, but
+             * removed anyway rather than kept on a hunch, per explicit
+             * instruction to rebuild from the reference rather than
+             * carry over anything not proven necessary. */
 
             return ERR_OK;
         }
@@ -195,28 +193,24 @@ static int lw_recv(void *ctx, uint8_t *buf, size_t max_len)
     return (int)n;
 }
 
+/* REBUILT 2026-07-21 -- full rewrite against the confirmed-clean
+ * reference test (eaimxrt1062_lwip_dhcp_bm's test_tcp_accept_cb(), which
+ * sends real data cleanly on both wired and WiFi). That code does
+ * exactly this and nothing more: tcp_write() with TCP_WRITE_FLAG_COPY,
+ * then tcp_output(). No tcp_sndbuf() pre-check/clamp, no diagnostic
+ * tracing. The removed clamp logic was never actually the cause (its
+ * own trace never showed it triggering on any failing send), but it's
+ * gone anyway rather than kept on a hunch -- this function should now
+ * be provably identical in behavior to the one that's confirmed working
+ * end to end. */
 static int lw_send(void *ctx, const uint8_t *buf, size_t len)
 {
     tcp_lwip_conn_t *c = (tcp_lwip_conn_t *)ctx;
     struct tcp_pcb *pcb = (struct tcp_pcb *)c->pcb;
     err_t err;
-    u16_t avail;
 
     if (pcb == NULL || !c->alive) {
         return -1;
-    }
-
-    avail = tcp_sndbuf(pcb);
-    if (avail == 0) {
-        return 0; /* send buffer currently full -- caller retries next
-                      iteration; matches how a blocking write would have
-                      just taken longer under the old sockets model,
-                      rather than failing outright */
-    }
-    if (len > avail) {
-        len = avail; /* partial write -- caller (tcp_session.c etc) should
-                         already tolerate short writes since this mirrors
-                         normal TCP send behavior anyway */
     }
 
     err = tcp_write(pcb, buf, (u16_t)len, TCP_WRITE_FLAG_COPY);
@@ -224,23 +218,6 @@ static int lw_send(void *ctx, const uint8_t *buf, size_t len)
         return -1;
     }
     tcp_output(pcb);
-
-    /* TEMPORARY DIAGNOSTIC, added 2026-07-21 per explicit report of
-     * "no data on the client" despite every send() call site reporting
-     * full success. tcp_sndbuf() (avail, above) only reflects OUR OWN
-     * local buffer capacity -- it says nothing about the PEER's
-     * currently advertised receive window (pcb->snd_wnd), which is what
-     * actually gates whether lwIP transmits new data onto the wire.
-     * tcp_write()/tcp_output() can both report success while lwIP
-     * silently withholds the segment because the peer's window is zero
-     * or too small -- a normal TCP flow-control mechanism, not a bug in
-     * this code, but invisible at every layer traced so far since none
-     * of them look at the peer's window. Logging it directly here to
-     * either confirm or rule this out. Remove once this report is
-     * resolved. */
-    PRINTF("lw_send: len=%u snd_wnd=%u snd_buf=%u unacked=%u unsent=%u\r\n",
-           (unsigned)len, (unsigned)pcb->snd_wnd, (unsigned)pcb->snd_buf,
-           (unsigned)(pcb->unacked != NULL), (unsigned)(pcb->unsent != NULL));
 
     return (int)len;
 }

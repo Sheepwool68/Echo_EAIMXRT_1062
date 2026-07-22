@@ -5,14 +5,6 @@
  */
 
 #include "tcp_session.h"
-#include "debug_console_rt1062.h"
-
-/* PRINTF redirect to LPUART5 -- added 2026-07-21 for the connect-greeting
- * send tracing below (TEMPORARY DIAGNOSTIC), see that call site's own
- * comment. host_tests/Makefile's test_tcp_session_EXTRA pulls in the
- * debug_console_stub.c stub so this still links on the host. */
-#undef PRINTF
-#define PRINTF debug_printf
 
 #define GREETING_BUF_SIZE 64
 #define STATUS_BUF_SIZE   32
@@ -38,36 +30,20 @@ tcp_session_event_t tcp_session_process(const tcp_socket_transport_t *t,
 
     if (!session->client_connected) {
         char greeting[GREETING_BUF_SIZE];
-        char status[STATUS_BUF_SIZE];
         int n;
 
-        /* TEMPORARY DIAGNOSTIC, added 2026-07-21 per explicit report
-         * ("You are not sending the connected string on first socket
-         * connection") -- send()'s return value was never checked here,
-         * same gap already found and traced in process_nrf_spi()'s
-         * chip-read send. LSOC lighting confirms this branch genuinely
-         * runs (it's the same TCP_SESSION_NEWLY_CONNECTED event that
-         * drives the LED), so the open question is specifically whether
-         * these two sends succeed at the transport layer. Remove once
-         * this report is resolved. */
+        /* TEMPORARY 2026-07-21, per explicit request -- testing the
+         * rebuilt TX path with the single simplest possible case first
+         * (one message on connect, nothing else) before layering
+         * anything back on. The battery-status send on connect is
+         * skipped here on purpose; restore it (pc_format_battery_status()
+         * into a STATUS_BUF_SIZE buffer, then t->send()) once the
+         * connect greeting alone is confirmed working. */
         n = pc_build_connect_greeting(last_time_sent, greeting, sizeof(greeting));
         if (n > 0) {
-            int sent;
-            /* TEMPORARY DIAGNOSTIC, added 2026-07-21 -- confirms the
-             * SOURCE buffer is correct (last byte really is 0x0a) right
-             * before it's handed to the transport, to rule in/out
-             * pc_build_connect_greeting() itself vs. something further
-             * down the send path silently dropping the trailing byte.
-             * Remove once this report is resolved. */
-            PRINTF("greeting source: n=%d last_byte=0x%02x\r\n", n, (unsigned char)greeting[n - 1]);
-            sent = t->send(t->ctx, (const uint8_t *)greeting, (size_t)n);
-            PRINTF("TCP connect greeting send: requested=%d actual=%d\r\n", n, sent);
+            t->send(t->ctx, (const uint8_t *)greeting, (size_t)n);
         }
-        n = pc_format_battery_status(batt_percent, status, sizeof(status));
-        if (n > 0) {
-            int sent = t->send(t->ctx, (const uint8_t *)status, (size_t)n);
-            PRINTF("TCP connect battery-status send: requested=%d actual=%d\r\n", n, sent);
-        }
+        (void)batt_percent;
 
         session->client_connected = 1;
         t->on_new_connection(t->ctx);

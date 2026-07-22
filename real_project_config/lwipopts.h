@@ -224,35 +224,28 @@ void sys_check_core_locking(void);
  * Checksum computation verification and computation enabled by default.
  * If not desired, define all of these symbols as 1.
  */
-/* RE-ENABLED 2026-07-21, second attempt -- the first attempt (same
- * session, now reverted per the git history) was tangled together with
- * two OTHER simultaneous changes (FSL_SDK_ENABLE_DRIVER_CACHE_CONTROL,
- * PBUF_POOL_SIZE) and a separate, self-inflicted regression (the
- * standalone echo test's harness toggle got silently erased by a
- * scaffold->real-project sync), so that "didn't help" result was never
- * trustworthy in isolation. This time: byte-level Wireshark capture
- * has confirmed a genuine, deterministic 1-byte truncation on short
- * (<=23 byte) outgoing TCP payloads specifically -- source buffer
- * verified correct right up to the send() call, so the byte is lost
- * somewhere in the TX path. Current suspect: hardware TX checksum
- * insertion (ENET_HW_CHKSUM, enet_ethernetif_kinetis.c) has documented
- * erratum behavior on some i.MX RT ENET silicon revisions for very
- * short frames. Switching to software-computed checksums disables that
- * hardware path entirely (ENET_HW_CHKSUM becomes false when
- * CHECKSUM_GEN_IP=1), bypassing the suspected erratum instead of
- * fixing it in hardware. The isolated minimal test that DID work used a
- * 43-byte message -- long enough to never exercise a short-frame edge
- * case -- so its earlier success doesn't contradict this theory. */
+/* SET TO SOFTWARE (0) 2026-07-22 -- found via direct diff against
+ * eaimxrt1062_lwip_dhcp_bm (NXP/EA's own confirmed-clean reference,
+ * byte-for-byte identical ENET driver/glue files to this project):
+ * that project runs with IP/UDP/TCP/ICMP checksums computed in
+ * SOFTWARE (this exact 0 value) and only forces ICMP6 to 1 via a
+ * .cproject command-line -D define (hardware genuinely can't do that
+ * one, see CHECKSUM_GEN_ICMP6 below) -- it never actually ran with
+ * hardware checksum offload enabled, despite the "1, re-enabled"
+ * history below. That history's own suspicion (hardware TX checksum
+ * insertion erratum on short frames, ENET_HW_CHKSUM in
+ * enet_ethernetif_kinetis.c) was the right track, just never testable
+ * in isolation until this direct reference comparison. */
 #ifndef CHECKSUM_GEN_IP
-#define CHECKSUM_GEN_IP 1
+#define CHECKSUM_GEN_IP 0
 #endif
 
 #ifndef CHECKSUM_GEN_UDP
-#define CHECKSUM_GEN_UDP 1
+#define CHECKSUM_GEN_UDP 0
 #endif
 
 #ifndef CHECKSUM_GEN_TCP
-#define CHECKSUM_GEN_TCP 1
+#define CHECKSUM_GEN_TCP 0
 #endif
 
 /* Must match GEN_IP/GEN_UDP/GEN_TCP exactly -- kinetis_configchecks.h
@@ -261,7 +254,7 @@ void sys_check_core_locking(void);
  * are ALL set to the same value ("all hardware-assisted checksum
  * features either turned on or off"), ICMPv6 excepted. */
 #ifndef CHECKSUM_GEN_ICMP
-#define CHECKSUM_GEN_ICMP 1
+#define CHECKSUM_GEN_ICMP 0
 #endif
 
 /* Must be 1 -- CONFIRMED from the SDK's own
@@ -276,23 +269,23 @@ void sys_check_core_locking(void);
 #define CHECKSUM_GEN_ICMP6 1
 #endif
 
-/* RE-ENABLED 2026-07-21, same reasoning as the GEN_* flags above. */
+/* SET TO SOFTWARE (0) 2026-07-22, same reasoning as the GEN_* flags above. */
 #ifndef CHECKSUM_CHECK_IP
-#define CHECKSUM_CHECK_IP 1
+#define CHECKSUM_CHECK_IP 0
 #endif
 
 #ifndef CHECKSUM_CHECK_UDP
-#define CHECKSUM_CHECK_UDP 1
+#define CHECKSUM_CHECK_UDP 0
 #endif
 
 #ifndef CHECKSUM_CHECK_TCP
-#define CHECKSUM_CHECK_TCP 1
+#define CHECKSUM_CHECK_TCP 0
 #endif
 
 /* Must match CHECK_IP/CHECK_UDP/CHECK_TCP exactly -- see GEN_ICMP's
  * own comment above, same compile-time-enforced equality constraint. */
 #ifndef CHECKSUM_CHECK_ICMP
-#define CHECKSUM_CHECK_ICMP 1
+#define CHECKSUM_CHECK_ICMP 0
 #endif
 
 /* Must be 1 -- same reasoning as CHECKSUM_GEN_ICMP6 above. */
