@@ -34,13 +34,10 @@
  * package/host_tests/Makefile's test_nrf_spi_protocol_EXTRA. */
 #include "debug_console_rt1062.h"
 #undef PRINTF
-/* SILENCED 2026-07-20, per explicit request ("clean up this shit, I
- * dont want to see nrf printf anymore") -- was `debug_printf`. Left
- * the redirect infrastructure/include in place rather than ripping out
- * every individual PRINTF call site (lower risk, easily reversible if
- * this tracing is wanted again later -- just restore the line below to
- * `#define PRINTF debug_printf`). */
-#define PRINTF(...) ((void)0)
+/* RE-ENABLED 2026-07-22, per explicit request ("I want to see printf
+ * so I see what is happening on boot like before") -- every nRF SPI
+ * command, its args, and its reply, visible on LPUART5 again. */
+#define PRINTF debug_printf
 
 /* ------------------------------------------------------------------ */
 /* Little-endian byte readers (see header for why we parse explicitly  */
