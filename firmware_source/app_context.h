@@ -4,12 +4,13 @@
  * Bundles every ported module's runtime state into one struct, and
  * declares the top-level init/loop entry points that replace main().
  *
- * NOT everything from the original's globals is here -- deliberately
- * excluded:
- *   - MP2731 battery-charger polling/control -- a distinct library
- *     never provided, referenced only incidentally in main()'s loop.
- *     batt_percent is kept as a plain field you can set from wherever
- *     your charger driver lives.
+ * UPDATE 2026-07-22: the MP2731 charge-status poll (watchdog kick +
+ * charge-logo update, see process_mp2731_status() in app_loop.c) is now
+ * ported -- mp2731_prev_status/mp2731_check_ms below back it. Previously
+ * this file's own note said the MP2731 side was "a distinct library
+ * never provided, referenced only incidentally" -- that was stale even
+ * before this fix (mp2731_charger_rt1062.c/h was added for bms_init.c's
+ * setpoint writes), just nothing polled REG_STATUS periodically yet.
  */
 
 #ifndef APP_CONTEXT_H
@@ -248,9 +249,17 @@ typedef struct {
     uint32_t check_interval_ms;
     uint32_t check_interval2_ms;
 
-    /* ---- Battery (charger library not provided) ---- */
+    /* ---- Battery ---- */
     int batt_percent;
     int board_version; /* was the global board_vers -- see bms_init.h */
+    uint32_t mp2731_check_ms; /* was the same checkInterval-style 1Hz
+        cadence as the DS3231 rollover block in the original, decoupled
+        into its own periodic check here per app_loop.c's own note --
+        see process_mp2731_status(). */
+    int mp2731_prev_status; /* was the global prev_char -- -1 sentinel
+        (not a valid 8-bit register value) so the very first read always
+        counts as "changed" and updates the charge logo immediately,
+        instead of possibly matching a stale zero-initialized value. */
     uint32_t last_touch_time_ms; /* was the original's implicit touch tracking, see process_display_events() */
     int screen_dimmed;
     int form_before_dim; /* captured via display_get_current_form() right

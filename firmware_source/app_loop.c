@@ -30,6 +30,7 @@
 #include "systick_ms_rt1062.h"
 #include "enet_lwip_rt1062.h"
 #include "max17303_fuel_gauge_rt1062.h"
+#include "mp2731_charger_rt1062.h"
 #include "debug_console_rt1062.h"
 #include <stdio.h>
 #include <string.h>
@@ -76,6 +77,10 @@
     your actual firmware's behavior. */
 #define DIM_DELAY_S        20u
 #define BATTERY_CHECK_MS   10000u
+#define MP2731_STATUS_CHECK_MS 1000u /* was piggy-backed on the DS3231's
+    1Hz rollover in the original -- decoupled into its own ~1s cadence
+    here per this port's own established convention (see
+    process_mp2731_status()) */
 #define GPS_SIGNAL_CHECK_MS 30000u
 #define STATUS_BROADCAST_MS 2000u
 #define GPRS_CHECK_TIME_MS  10000u
@@ -1422,6 +1427,67 @@ static void process_periodic_checks(app_context_t *app, uint32_t now_ms)
         app_update_battery_percent(app);
         app->check_interval_ms = now_ms + BATTERY_CHECK_MS;
     }
+
+    /* Was the MP2731 watchdog-kick + charge-status poll piggy-backed on
+     * the DS3231's 1Hz rollover (ACTIVERFID_V1.02_UHF.c lines 3638-3683)
+     * -- added 2026-07-22 per explicit report ("do not see the battery
+     * charge logo"), previously flagged as not-yet-ported (see this
+     * struct's own stale note, now corrected, in app_context.h). Given
+     * its own ~1s timer here rather than tied to the DS3231 ISR, per
+     * this port's established "doesn't belong architecturally inside
+     * time-sync" convention already used for the GPS signal check above. */
+#if APP_ENABLE_BMS
+    if (now_ms > app->mp2731_check_ms) {
+        uint8_t reg_char;
+
+        /* Was `reg_char = MP_Read(MP2731_TIMER); MP_Write(MP2731_TIMER,
+         * reg_char | 0x08);` -- resets the MP2731's charge watchdog so it
+         * doesn't fault/reset the charge current after ~40s. Kept for
+         * fidelity/robustness even though bms_init.c's own MP2731_TIMER
+         * setpoint (0x85) already disables the watchdog per the
+         * original's own commented experiment there. */
+        if (mp2731_read_reg(MP2731_REG_TIMER, &reg_char) == 0) {
+            mp2731_write_reg(MP2731_REG_TIMER, (uint8_t)(reg_char | 0x08));
+        }
+
+        /* Was `reg_char = MP_Read(MP2731_STATUS); if(reg_char !=
+         * prev_char){ ... }` -- only acts on a genuine change, matching
+         * the original exactly (not a per-tick rewrite of the logo). */
+        if (mp2731_read_reg(MP2731_REG_STATUS, &reg_char) == 0
+            && (int)reg_char != app->mp2731_prev_status) {
+            uint8_t charge_type = (uint8_t)(reg_char & 0xE0);
+
+            app->mp2731_prev_status = (int)reg_char;
+
+            /* Was the `if(board_vers<32){ ... }` adapter-current-limit
+             * adjustment -- dead on this board (board_version is
+             * confirmed 32 via bms_init()'s 0x4067 signature check), but
+             * kept for fidelity / other board revisions. */
+            if (app->board_version < 32) {
+                if (charge_type == 0x20) {
+                    mp2731_write_reg(MP2731_REG_CURRENT, 0x5C); /* non-standard adapter, limit 1.5A */
+                } else if (charge_type > 0x20 && charge_type < 0xA0) {
+                    mp2731_write_reg(MP2731_REG_CURRENT, 0x48); /* SDP/CDP/DCP, limit 500mA */
+                } else if (charge_type == 0xA0) {
+                    mp2731_write_reg(MP2731_REG_CURRENT, 0x5C); /* fast charge 3A+, capped to 1.5A */
+                } else {
+                    mp2731_write_reg(MP2731_REG_CURRENT, 0x48); /* no connection/OTG, 500mA */
+                }
+            }
+
+            /* Was `if(reg_char&0x18){ genieWriteObject(GENIE_OBJ_USERIMAGES,
+             * 0x01, 1); }else{ ...0); }` -- reg_char is already
+             * &0xE0'd into charge_type above, so re-derive the 0x18
+             * charging-status bits from the ORIGINAL read, not
+             * charge_type. */
+#if APP_ENABLE_DISPLAY
+            display_set_charge_logo((reg_char & 0x18) != 0);
+#endif
+        }
+
+        app->mp2731_check_ms = now_ms + MP2731_STATUS_CHECK_MS;
+    }
+#endif
 
     /* Was `if(set_time){ if(...checkInterval2...){ GetGPS_Signal(); }}`
      * -- the original gates its own satellite-count/fix-status readout

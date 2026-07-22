@@ -142,6 +142,11 @@ int app_init(app_context_t *app)
      * more closely, even though this port's overall boot is slower. */
     app->check_interval_ms = systick_ms_now() + 2000u;
     app->check_interval2_ms = systick_ms_now() + 15000u;
+    app->mp2731_check_ms = systick_ms_now() + 1000u;
+    /* -1 = "no status read yet" -- 0 is a real, valid MP2731_REG_STATUS
+     * value, so it can't double as the initial sentinel (see
+     * app_context.h's field comment). */
+    app->mp2731_prev_status = -1;
 
 #if APP_ENABLE_BOARD_IO
     /* buzzer_rt1062_init() MOVED 2026-07-16 to run before the startup
