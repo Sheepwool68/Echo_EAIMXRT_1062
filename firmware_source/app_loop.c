@@ -30,7 +30,6 @@
 #include "systick_ms_rt1062.h"
 #include "enet_lwip_rt1062.h"
 #include "max17303_fuel_gauge_rt1062.h"
-#include "mp2731_charger_rt1062.h"
 #include "debug_console_rt1062.h"
 #include <stdio.h>
 #include <string.h>
@@ -77,10 +76,6 @@
     your actual firmware's behavior. */
 #define DIM_DELAY_S        20u
 #define BATTERY_CHECK_MS   10000u
-#define MP2731_STATUS_CHECK_MS 1000u /* was piggy-backed on the DS3231's
-    1Hz rollover in the original -- decoupled into its own ~1s cadence
-    here per this port's own established convention (see
-    process_mp2731_status()) */
 #define GPS_SIGNAL_CHECK_MS 30000u
 #define STATUS_BROADCAST_MS 2000u
 #define GPRS_CHECK_TIME_MS  10000u
@@ -631,22 +626,22 @@ static void process_time_sync(app_context_t *app)
             }
 
             {
-                /* CORRECTED 2026-07-22, per explicit instruction -- was
-                 * `if(!BitRdPortI(PBDR,3)){ comms_NRF(0x08); set_time_nrf=0; }`,
-                 * gating this push on the nRF READY line reading "not
-                 * busy". Confirmed wrong, same reasoning as
-                 * app_update_battery_percent()'s own 2026-07-22 fix:
-                 * NRF_READY only ever means "poll the nRF for new chip
-                 * reads" (see process_nrf_spi()'s own use of it) -- it
-                 * isn't a general SPI-bus-busy signal, so nothing else
-                 * should gate on it. spi_bus_busy is always passed as 0
-                 * now (time_sync_maybe_push_nrf_time()'s own parameter/
-                 * contract kept as-is -- still a reasonable general
-                 * "defer if busy" API, just never actually busy from
-                 * this port's perspective). With APP_ENABLE_NRF_SPI off,
-                 * nrf_spi_send_datetime() below is compiled out anyway,
-                 * so passing 0 here is still safe either way. */
-                if (time_sync_maybe_push_nrf_time(&app->set_time_nrf_pending, 0)) {
+                /* was `if(!BitRdPortI(PBDR,3)){ comms_NRF(0x08); set_time_nrf=0; }` --
+                 * PBDR bit3 is now the nRF SPI ready/attention line,
+                 * read directly rather than through the poll/retrieve
+                 * dispatch below (this is a quick non-blocking peek,
+                 * not a full transaction). */
+#if APP_ENABLE_NRF_SPI
+                int spi_bus_busy = app->nrf_transport.read_ready_line(app->nrf_transport.hw_ctx);
+#else
+                int spi_bus_busy = 1; /* treat as always-busy with the
+                    link disabled, so time_sync_maybe_push_nrf_time()
+                    never fires and set_time_nrf_pending just stays set
+                    until this stage is enabled -- matches the spirit of
+                    "everything still runs, just inert" from the other
+                    staged bring-up flags. */
+#endif
+                if (time_sync_maybe_push_nrf_time(&app->set_time_nrf_pending, spi_bus_busy)) {
                     uint32_t nrf_time = rtc_datetime_to_nrf_time(&app->current_time);
 #if APP_ENABLE_NRF_SPI
                     nrf_spi_send_datetime(&app->nrf_transport, nrf_time);
@@ -1349,12 +1344,11 @@ static void process_remote(app_context_t *app, uint32_t now_ms)
  * confirmed working (see bms_init.c's board-version read + project
  * memory). Faithfully ported: MAX17303_REG_REPSOC is a 1/256-%-per-LSB
  * raw value; original's own "+1, never seems to get to 100" fudge and
- * 100% cap both preserved verbatim. Was also gated on board_vers>=32
- * like the original -- REMOVED 2026-07-22, per explicit instruction
- * ("the older boards <32 can be scrapped, this processor will not be
- * used on those older boards"); see this function's own 2026-07-22
- * comment below. app->board_version is still detected/reported
- * (bms_init.c's 0x4067 signature check), just no longer gates this.
+ * 100% cap both preserved verbatim. Gated on board_vers>=32 exactly
+ * like the original -- app->board_version only ever gets set away from
+ * its 0 default by bms_init()'s real 0x4067 signature check, so this
+ * stays a correct no-op (matching original behavior for boards below
+ * that revision) until APP_ENABLE_BMS is on.
  * RESTORED 2026-07-20 -- the original ALSO gates this whole block
  * behind `!BitRdPortI(PBDR,3)` (PB3 = NRF_READY input, GPIO3 pin 2 in
  * this port). Previously skipped as "genuinely unclear... real bus-
@@ -1390,26 +1384,15 @@ static void process_remote(app_context_t *app, uint32_t now_ms)
  * there. */
 int app_update_battery_percent(app_context_t *app)
 {
-    /* CORRECTED 2026-07-22, per explicit instruction -- this used to defer
-     * whenever the nRF READY line was asserted ("don't let slow work delay
-     * draining a pending nRF read", ported faithfully from the original's
-     * own `if(!BitRdPortI(PBDR,3))` wrapping this exact block). Confirmed
-     * wrong: NRF_READY has nothing to do with the MAX17303 fuel-gauge I2C
-     * read -- it exists solely to tell this port when to poll the nRF chip
-     * for new chip reads, unrelated buses entirely. That gate was also the
-     * actual root cause of "V=0 forever" over TCP: this board's NRF_READY
-     * reads permanently asserted (see project memory), which silently
-     * blocked every battery read since the gate was restored 2026-07-20. */
+#if APP_ENABLE_NRF_SPI
+    if (app->nrf_transport.read_ready_line(app->nrf_transport.hw_ctx)) {
+        return 0; /* nRF has a pending read queued -- defer, matches original */
+    }
+#endif
 #if APP_ENABLE_BMS
-    /* SIMPLIFIED 2026-07-22, per explicit instruction ("the older boards
-     * <32 can be scrapped, this processor will not be used on those
-     * older boards") -- was gated on `app->board_version >= 32`; now
-     * unconditional. board_version is still detected/reported (see
-     * bms_init.c/app_init.c's boot trace), just no longer gates this. */
-    {
+    if (app->board_version >= 32) {
         uint16_t max_register;
-        int rc = max17303_read_reg(MAX17303_ADDR_MAIN, MAX17303_REG_REPSOC, &max_register);
-        if (rc == 0) {
+        if (max17303_read_reg(MAX17303_ADDR_MAIN, MAX17303_REG_REPSOC, &max_register) == 0) {
             float max_value = (float)max_register * (1.0f / 256.0f);
             max_value += 1.0f; /* "never seems to get to 100 so top it up 1" -- original's own comment */
             if (max_value > 100.0f) {
@@ -1427,59 +1410,14 @@ int app_update_battery_percent(app_context_t *app)
 static void process_periodic_checks(app_context_t *app, uint32_t now_ms)
 {
     if (now_ms > app->check_interval_ms) {
-        /* app_update_battery_percent() always returns 1 now (see its own
-         * 2026-07-22 correction comment -- no longer gated on nRF READY),
-         * so this always advances the interval on the pass it runs. */
-        app_update_battery_percent(app);
-        app->check_interval_ms = now_ms + BATTERY_CHECK_MS;
-    }
-
-    /* Was the MP2731 watchdog-kick + charge-status poll piggy-backed on
-     * the DS3231's 1Hz rollover (ACTIVERFID_V1.02_UHF.c lines 3638-3683)
-     * -- added 2026-07-22 per explicit report ("do not see the battery
-     * charge logo"), previously flagged as not-yet-ported (see this
-     * struct's own stale note, now corrected, in app_context.h). Given
-     * its own ~1s timer here rather than tied to the DS3231 ISR, per
-     * this port's established "doesn't belong architecturally inside
-     * time-sync" convention already used for the GPS signal check above. */
-#if APP_ENABLE_BMS
-    if (now_ms > app->mp2731_check_ms) {
-        uint8_t reg_char;
-
-        /* Was `reg_char = MP_Read(MP2731_TIMER); MP_Write(MP2731_TIMER,
-         * reg_char | 0x08);` -- resets the MP2731's charge watchdog so it
-         * doesn't fault/reset the charge current after ~40s. Kept for
-         * fidelity/robustness even though bms_init.c's own MP2731_TIMER
-         * setpoint (0x85) already disables the watchdog per the
-         * original's own commented experiment there. */
-        if (mp2731_read_reg(MP2731_REG_TIMER, &reg_char) == 0) {
-            mp2731_write_reg(MP2731_REG_TIMER, (uint8_t)(reg_char | 0x08));
+        if (app_update_battery_percent(app)) {
+            app->check_interval_ms = now_ms + BATTERY_CHECK_MS;
         }
-
-        /* Was `reg_char = MP_Read(MP2731_STATUS); if(reg_char !=
-         * prev_char){ ... }` -- only acts on a genuine change, matching
-         * the original exactly (not a per-tick rewrite of the logo). */
-        if (mp2731_read_reg(MP2731_REG_STATUS, &reg_char) == 0
-            && (int)reg_char != app->mp2731_prev_status) {
-            app->mp2731_prev_status = (int)reg_char;
-
-            /* SIMPLIFIED 2026-07-22, per explicit instruction ("the
-             * older boards <32 can be scrapped, this processor will not
-             * be used on those older boards") -- removed the original's
-             * `if(board_vers<32){ ... }` adapter-current-limit
-             * adjustment (and the now-unused charge_type=reg_char&0xE0
-             * it depended on) entirely, rather than keeping it dead. */
-
-            /* Was `if(reg_char&0x18){ genieWriteObject(GENIE_OBJ_USERIMAGES,
-             * 0x01, 1); }else{ ...0); }`. */
-#if APP_ENABLE_DISPLAY
-            display_set_charge_logo((reg_char & 0x18) != 0);
-#endif
-        }
-
-        app->mp2731_check_ms = now_ms + MP2731_STATUS_CHECK_MS;
+        /* else: nRF busy, retry next pass -- was the original's
+         * `if(!BitRdPortI(PBDR,3)){ ...; checkInterval = MS_TIMER + DELAY; }`,
+         * where checkInterval only advances on the same pass the read
+         * itself ran. */
     }
-#endif
 
     /* Was `if(set_time){ if(...checkInterval2...){ GetGPS_Signal(); }}`
      * -- the original gates its own satellite-count/fix-status readout
@@ -1495,20 +1433,26 @@ static void process_periodic_checks(app_context_t *app, uint32_t now_ms)
      * was observable anywhere before -- the Genie tank widget only
      * shows a scaled 0-100 bar, gated behind APP_ENABLE_DISPLAY, and
      * even then requires physically reading a bar's height).
-     * CORRECTED 2026-07-22, per explicit instruction -- the original's
-     * own `!BitRdPortI(PBDR,3)` gate around GetGPS_Signal() (restored
-     * 2026-07-20) is now removed, same reasoning as
-     * app_update_battery_percent()'s own 2026-07-22 fix: NRF_READY only
-     * means "poll the nRF for new chip reads" (see process_nrf_spi()'s
-     * own use of it), not a general bus-safety/scheduling-priority
-     * signal for unrelated GPS SPI work. checkInterval2 now always
-     * advances on the pass this runs. */
+     * RESTORED 2026-07-20 -- the original's own `!BitRdPortI(PBDR,3)`
+     * gate around GetGPS_Signal() itself (distinct from the set_time
+     * wrapper decoupled above, which stays decoupled per that explicit
+     * instruction) -- see app_update_battery_percent()'s doc comment
+     * for why this is believed to be scheduling priority, not a bus
+     * safety requirement. Same nesting as the original: checkInterval2
+     * only advances on the pass the check actually ran. */
 #if APP_ENABLE_GPS
     if (now_ms > app->check_interval2_ms) {
-        int raw_sats = -1, status = -1;
-        gps_update_signal_status(&raw_sats, &status);
-        PRINTF("GPS signal: %d sats, status=%d, pps=%d\r\n", raw_sats, status, app->pps);
-        app->check_interval2_ms = now_ms + GPS_SIGNAL_CHECK_MS;
+#if APP_ENABLE_NRF_SPI
+        int nrf_busy = app->nrf_transport.read_ready_line(app->nrf_transport.hw_ctx);
+#else
+        int nrf_busy = 0;
+#endif
+        if (!nrf_busy) {
+            int raw_sats = -1, status = -1;
+            gps_update_signal_status(&raw_sats, &status);
+            PRINTF("GPS signal: %d sats, status=%d, pps=%d\r\n", raw_sats, status, app->pps);
+            app->check_interval2_ms = now_ms + GPS_SIGNAL_CHECK_MS;
+        }
     }
 #endif
 }

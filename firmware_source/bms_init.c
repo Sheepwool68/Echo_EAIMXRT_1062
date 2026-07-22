@@ -27,14 +27,18 @@ int bms_init(int *out_board_version)
     int board_vers;
 
     /*
-     * board_vers is a pre-existing global in the original, only assigned
-     * via `board_vers=32` when the 0x4067 signature is read back below.
-     * No longer gates any behavior here (see 2026-07-22 simplification
-     * below -- older, pre-<32 boards are out of scope for this
-     * processor entirely), kept purely as confirmation telemetry
-     * (out_board_version, app_init.c's boot trace).
+     * board_vers is a pre-existing global in the original (not declared
+     * in program_init() itself, only assigned via `board_vers=32` when
+     * detected) -- its default value BEFORE this detection code runs
+     * isn't visible anywhere in what's been pasted. Defaulting to 0
+     * here is NOT a confirmed value, just a placeholder that makes the
+     * `if (board_vers >= 32)` branch below take the "older board"
+     * path unless the 0x4067 signature is actually read back. If your
+     * real firmware initializes board_vers to something else (e.g. a
+     * specific pre-3.2 revision number) before program_init() runs,
+     * update this default to match.
      */
-    board_vers = 0;
+    board_vers = 0; /* TODO VERIFY: see comment above */
 
     mp2731_rt1062_init();
     max17303_rt1062_init();
@@ -49,15 +53,7 @@ int bms_init(int *out_board_version)
     /* Was the commented-out `max_write(MAX17303_ADDRESS1, MAX17303_FAULTS, 0);`
      * right after -- never executed in the original, not ported as active code. */
 
-    /* SIMPLIFIED 2026-07-22, per explicit instruction ("the older boards
-     * <32 can be scrapped, this processor will not be used on those
-     * older boards") -- the original's `if(board_vers>=32){...}else{
-     * MP_Write(MP2731_CHARGE_CURRENT, 0xB4); }` is now unconditional,
-     * dropping the old-board 0xB4 (2.4A) charge-current fallback
-     * entirely. board_vers/out_board_version detection itself is kept
-     * (still useful confirmation telemetry -- see app_init.c's boot
-     * trace), it just no longer gates any behavior. */
-    {
+    if (board_vers >= 32) {
         /* Was: max_write(MAX17303_ADDRESS2, MAX17303_nPackCfg, 0x101); //do not use external thermister */
         max17303_write_reg(MAX17303_ADDR_NV, MAX17303_REG_NPACKCFG, 0x0101u);
 
@@ -114,6 +110,9 @@ int bms_init(int *out_board_version)
         /* Was: MP_Write(MP2731_CHARGE_CURRENT, 0xE0); //max fast charge of 4.16A only set on bootup as POR */
         mp2731_write_reg(MP2731_REG_CHARGE_CURRENT, 0xE0u);
         /* commented out in original: 0xFF (4.52A), 0xC3 (2.98A), 0xB8 (2.56A) alternates -- never executed */
+    } else {
+        /* Was: MP_Write(MP2731_CHARGE_CURRENT, 0xB4); //max fast charge of 2.4A only set on bootup as POR */
+        mp2731_write_reg(MP2731_REG_CHARGE_CURRENT, 0xB4u);
     }
 
     /* The following run UNCONDITIONALLY regardless of board_vers,

@@ -65,16 +65,6 @@ typedef enum {
 } display_led_t;
 void display_set_led(display_led_t led, int on);
 
-/* Was `genieWriteObject(GENIE_OBJ_USERIMAGES, 0x01, reg_char ? 1 : 0)`
- * (ACTIVERFID_V1.02_UHF.c line 3679/3681) -- shows/hides the battery
- * charge-logo image based on the MP2731's charging-status bits. Added
- * 2026-07-22 per explicit report ("do not see the battery charge
- * logo") -- this whole poll was previously flagged as not-yet-ported
- * (see app_loop.c's process_mp2731_status()). The original's widget
- * index (0x01) has no named constant in genie_protocol.h -- ported as
- * a literal, matching source exactly. */
-void display_set_charge_logo(int charging);
-
 /* Was genieWriteObject(GENIE_OBJ_4DBUTTON, ...) -- a distinct Genie
  * widget type from LED (a touchscreen button's own visual state, not
  * a status indicator light). Takes the real genie_4dbutton_t index

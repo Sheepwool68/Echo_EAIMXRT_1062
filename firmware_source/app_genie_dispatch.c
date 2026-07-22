@@ -174,16 +174,17 @@ void app_genie_update_main(app_context_t *app)
     app->time_offset = 0;
 
     /* Was `if(board_vers>=32){ max_register = max_read(...REPSOC);
-     * ... }` -- reads app->batt_percent (populated by
-     * app_update_battery_percent(), app_loop.c) rather than re-deriving
-     * a raw MAX17303 register read here. SIMPLIFIED 2026-07-22, per
-     * explicit instruction ("the older boards <32 can be scrapped, this
-     * processor will not be used on those older boards") -- the
-     * board_version>=32 gate is now unconditional. */
+     * ... }` -- reads app->batt_percent (the field this port already
+     * designates for whichever battery-percent source populates it,
+     * see app_context.h's own comment) rather than re-deriving a raw
+     * MAX17303 register read here; that access belongs in a battery-
+     * polling module, which CLAUDE.md already flags as not yet built. */
+    if (app->board_version >= 32) {
 #if APP_ENABLE_DISPLAY
-    display_set_gauge(GENIE_GAUGE_BAT, app->batt_percent);
-    display_set_digits(GENIE_DLED_BAT, app->batt_percent);
+        display_set_gauge(GENIE_GAUGE_BAT, app->batt_percent);
+        display_set_digits(GENIE_DLED_BAT, app->batt_percent);
 #endif
+    }
 }
 
 /* Was updateNetworkStrings() */

@@ -79,11 +79,6 @@ void display_set_led(display_led_t led, int on)
     genie_write_object(&s_genie, GENIE_OBJ_LED, genie_index, (uint16_t)(on ? 1 : 0));
 }
 
-void display_set_charge_logo(int charging)
-{
-    genie_write_object(&s_genie, GENIE_OBJ_USERIMAGES, 0x01, (uint16_t)(charging ? 1 : 0));
-}
-
 void display_set_4dbutton(genie_4dbutton_t button, int state)
 {
     genie_write_object(&s_genie, GENIE_OBJ_4DBUTTON, (uint8_t)button, (uint16_t)state);
