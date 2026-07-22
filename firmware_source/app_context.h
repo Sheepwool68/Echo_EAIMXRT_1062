@@ -312,8 +312,10 @@ int app_init(app_context_t *app);
 /*
  * Was ACTIVERFID_V1.02_UHF.c lines 3732-3742 (the checkInterval battery
  * block) -- reads MAX17303_REG_REPSOC and scales it into app->batt_percent
- * (no-op unless APP_ENABLE_BMS is on AND app->board_version>=32, see the
- * implementation's own comment in app_loop.c for the full detail).
+ * (no-op unless APP_ENABLE_BMS is on -- no longer also gated on
+ * app->board_version>=32, see the implementation's own 2026-07-22
+ * comment in app_loop.c: older, <32 boards are out of scope for this
+ * processor entirely).
  * Exposed here (rather than kept static in app_loop.c) so app_init()
  * can call it once immediately, before the first display paint --
  * added 2026-07-16 per explicit request that the battery bar/value

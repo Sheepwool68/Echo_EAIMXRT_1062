@@ -1349,11 +1349,12 @@ static void process_remote(app_context_t *app, uint32_t now_ms)
  * confirmed working (see bms_init.c's board-version read + project
  * memory). Faithfully ported: MAX17303_REG_REPSOC is a 1/256-%-per-LSB
  * raw value; original's own "+1, never seems to get to 100" fudge and
- * 100% cap both preserved verbatim. Gated on board_vers>=32 exactly
- * like the original -- app->board_version only ever gets set away from
- * its 0 default by bms_init()'s real 0x4067 signature check, so this
- * stays a correct no-op (matching original behavior for boards below
- * that revision) until APP_ENABLE_BMS is on.
+ * 100% cap both preserved verbatim. Was also gated on board_vers>=32
+ * like the original -- REMOVED 2026-07-22, per explicit instruction
+ * ("the older boards <32 can be scrapped, this processor will not be
+ * used on those older boards"); see this function's own 2026-07-22
+ * comment below. app->board_version is still detected/reported
+ * (bms_init.c's 0x4067 signature check), just no longer gates this.
  * RESTORED 2026-07-20 -- the original ALSO gates this whole block
  * behind `!BitRdPortI(PBDR,3)` (PB3 = NRF_READY input, GPIO3 pin 2 in
  * this port). Previously skipped as "genuinely unclear... real bus-
@@ -1400,7 +1401,12 @@ int app_update_battery_percent(app_context_t *app)
      * reads permanently asserted (see project memory), which silently
      * blocked every battery read since the gate was restored 2026-07-20. */
 #if APP_ENABLE_BMS
-    if (app->board_version >= 32) {
+    /* SIMPLIFIED 2026-07-22, per explicit instruction ("the older boards
+     * <32 can be scrapped, this processor will not be used on those
+     * older boards") -- was gated on `app->board_version >= 32`; now
+     * unconditional. board_version is still detected/reported (see
+     * bms_init.c/app_init.c's boot trace), just no longer gates this. */
+    {
         uint16_t max_register;
         int rc = max17303_read_reg(MAX17303_ADDR_MAIN, MAX17303_REG_REPSOC, &max_register);
         if (rc == 0) {
@@ -1455,31 +1461,17 @@ static void process_periodic_checks(app_context_t *app, uint32_t now_ms)
          * the original exactly (not a per-tick rewrite of the logo). */
         if (mp2731_read_reg(MP2731_REG_STATUS, &reg_char) == 0
             && (int)reg_char != app->mp2731_prev_status) {
-            uint8_t charge_type = (uint8_t)(reg_char & 0xE0);
-
             app->mp2731_prev_status = (int)reg_char;
 
-            /* Was the `if(board_vers<32){ ... }` adapter-current-limit
-             * adjustment -- dead on this board (board_version is
-             * confirmed 32 via bms_init()'s 0x4067 signature check), but
-             * kept for fidelity / other board revisions. */
-            if (app->board_version < 32) {
-                if (charge_type == 0x20) {
-                    mp2731_write_reg(MP2731_REG_CURRENT, 0x5C); /* non-standard adapter, limit 1.5A */
-                } else if (charge_type > 0x20 && charge_type < 0xA0) {
-                    mp2731_write_reg(MP2731_REG_CURRENT, 0x48); /* SDP/CDP/DCP, limit 500mA */
-                } else if (charge_type == 0xA0) {
-                    mp2731_write_reg(MP2731_REG_CURRENT, 0x5C); /* fast charge 3A+, capped to 1.5A */
-                } else {
-                    mp2731_write_reg(MP2731_REG_CURRENT, 0x48); /* no connection/OTG, 500mA */
-                }
-            }
+            /* SIMPLIFIED 2026-07-22, per explicit instruction ("the
+             * older boards <32 can be scrapped, this processor will not
+             * be used on those older boards") -- removed the original's
+             * `if(board_vers<32){ ... }` adapter-current-limit
+             * adjustment (and the now-unused charge_type=reg_char&0xE0
+             * it depended on) entirely, rather than keeping it dead. */
 
             /* Was `if(reg_char&0x18){ genieWriteObject(GENIE_OBJ_USERIMAGES,
-             * 0x01, 1); }else{ ...0); }` -- reg_char is already
-             * &0xE0'd into charge_type above, so re-derive the 0x18
-             * charging-status bits from the ORIGINAL read, not
-             * charge_type. */
+             * 0x01, 1); }else{ ...0); }`. */
 #if APP_ENABLE_DISPLAY
             display_set_charge_logo((reg_char & 0x18) != 0);
 #endif
