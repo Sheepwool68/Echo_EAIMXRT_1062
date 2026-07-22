@@ -32,18 +32,24 @@ tcp_session_event_t tcp_session_process(const tcp_socket_transport_t *t,
         char greeting[GREETING_BUF_SIZE];
         int n;
 
-        /* TEMPORARY 2026-07-21, per explicit request -- testing the
-         * rebuilt TX path with the single simplest possible case first
-         * (one message on connect, nothing else) before layering
-         * anything back on. The battery-status send on connect is
-         * skipped here on purpose; restore it (pc_format_battery_status()
-         * into a STATUS_BUF_SIZE buffer, then t->send()) once the
-         * connect greeting alone is confirmed working. */
         n = pc_build_connect_greeting(last_time_sent, greeting, sizeof(greeting));
         if (n > 0) {
             t->send(t->ctx, (const uint8_t *)greeting, (size_t)n);
         }
-        (void)batt_percent;
+
+        /* RESTORED 2026-07-22 -- battery-status send on connect, right
+         * after the greeting, now that the TCP TX path is confirmed
+         * fixed end to end (clock_config.c + lwipopts.h checksum fixes,
+         * see project memory). Was skipped 2026-07-21 to isolate the
+         * connect-greeting TX path during the truncation-bug
+         * investigation. */
+        {
+            char status[STATUS_BUF_SIZE];
+            int status_n = pc_format_battery_status(batt_percent, status, sizeof(status));
+            if (status_n > 0) {
+                t->send(t->ctx, (const uint8_t *)status, (size_t)status_n);
+            }
+        }
 
         session->client_connected = 1;
         t->on_new_connection(t->ctx);

@@ -246,12 +246,13 @@ static void process_data_sockets(app_context_t *app, uint32_t now_ms)
          * see the TODO already flagged in tcp_transport_lwip.c. */
     }
 
-    /* TEMPORARY 2026-07-21, per explicit request -- disabled for the
-     * same reason as tcp_session.c's connect-time battery-status send:
-     * testing the rebuilt TX path with just one message on connect and
-     * nothing else first. Restore this call once that's confirmed
-     * working. */
-    (void)now_ms;
+    /* RESTORED 2026-07-22, same reasoning as tcp_session.c's
+     * connect-time battery-status send -- the TCP TX path is now
+     * confirmed fixed end to end (clock_config.c + lwipopts.h
+     * checksum fixes, see project memory). */
+    tcp_broadcast_status(app->tcp_listener.transports, app->tcp_listener.sessions,
+                          TCP_LWIP_MAX_CLIENTS, app->batt_percent, now_ms,
+                          STATUS_BROADCAST_MS, &app->last_status_broadcast_ms);
 }
 
 /* ------------------------------------------------------------------ */
