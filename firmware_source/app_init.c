@@ -678,6 +678,23 @@ int app_init(app_context_t *app)
         return -1;
     }
     app->last_touch_time_s = (uint32_t)rtc_datetime_to_epoch(&app->current_time);
+
+    /* FOUND MISSING 2026-07-22, per explicit report ("timestamp is wrong"
+     * on an Active/LF chip read -- the nRF's own date_time field, read
+     * straight off the wire in nrf_spi_protocol.c, looked like seconds-
+     * since-the-nRF's-own-boot rather than a real epoch). Was
+     * `LoadSettings()`'s `set_time_nrf = 1;` (ACTIVERFID_V1.02_UHF.c line
+     * 2508) -- runs UNCONDITIONALLY at boot in the original, well before
+     * any GPS fix could possibly exist, so the nRF gets the DS3231's
+     * already-known time immediately rather than waiting on GPS (which
+     * may never get a fix at all, e.g. tested indoors). This port only
+     * ever set app->set_time_nrf_pending from a GPS-fix success
+     * (app_loop.c) or an explicit PC time-set command
+     * (app_pc_dispatch.c) -- never at boot -- so with no GPS fix, the
+     * nRF never received a time push at all. Combined with the
+     * NRF_READY-gate bug (also fixed 2026-07-22, see project memory),
+     * this fully explains the wrong nRF-side timestamp. */
+    app->set_time_nrf_pending = 1;
 #endif
 
 #if APP_ENABLE_DISPLAY
