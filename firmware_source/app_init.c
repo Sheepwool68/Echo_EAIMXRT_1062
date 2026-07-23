@@ -21,6 +21,7 @@
  */
 
 #include "app_context.h"
+#include "firmware_version.h"
 #include "app_pc_dispatch.h"
 #include "app_genie_dispatch.h"
 #include "display_stub.h"
@@ -442,28 +443,30 @@ int app_init(app_context_t *app)
 #if APP_ENABLE_DISPLAY
         /* Was `sprintf(version_str, "RCM %02d.%02d nRF%d E+", ...);
          * genieWriteStr(GENIE_SPLASH_STR, version_str);`
-         * (ACTIVERFID_V1.02_UHF.c line 3476-3477) -- never ported, a real
-         * splash-message gap. A bad/incomplete read doesn't mean the nRF
-         * is faulty -- it's a known debug-probe boot-timing artifact (the
-         * nRF only answers 0x0E within a window after its own boot); this
-         * project has directly observed BOTH `status=0,byte=0x00` (during
-         * the 2026-07-17 LPSPI3 mode/baud investigation) and the SPIS
-         * idle-default byte (0xBB/0xDD) as "didn't really answer" results
-         * on this exact link, so all three are treated as invalid here --
-         * don't block/retry, just show a placeholder instead of a
-         * specific-but-possibly-wrong number. RCM version left as "-.-"
-         * -- no confirmed _FIRMWARE_VERSION_ constant exists in this port
-         * yet, same gap already flagged in app_genie_dispatch.c's
-         * GENIE_FORM_OTHER handler. */
+         * (ACTIVERFID_V1.02_UHF.c line 3476-3477). RCM version now real
+         * (APP_FIRMWARE_VERSION, firmware_version.h -- was left as "-.-"
+         * until 2026-07-22, per explicit instruction: "V1.03 for now").
+         * nRF version still guarded: a bad/incomplete read doesn't mean
+         * the nRF is faulty -- it's a known debug-probe boot-timing
+         * artifact (the nRF only answers 0x0E within a window after its
+         * own boot); this project has directly observed BOTH
+         * `status=0,byte=0x00` (during the 2026-07-17 LPSPI3 mode/baud
+         * investigation) and the SPIS idle-default byte (0xBB/0xDD) as
+         * "didn't really answer" results on this exact link, so all
+         * three are treated as invalid here -- don't block/retry, just
+         * show a placeholder nRF number instead of a
+         * specific-but-possibly-wrong one. */
         {
             char version_str[32];
             int fw_valid = (fw_status == NRF_SPI_OK) && (fw_version != 0x00)
                          && (fw_version != NRF_SPI_POLL_IGNORE_SENTINEL)
                          && (fw_version != 0xDD);
             if (fw_valid) {
-                snprintf(version_str, sizeof(version_str), "RCM -.- nRF%d E+", fw_version);
+                snprintf(version_str, sizeof(version_str), "RCM %02d.%02d nRF%d E+",
+                         (APP_FIRMWARE_VERSION >> 8) & 0xFFu, APP_FIRMWARE_VERSION & 0xFFu, fw_version);
             } else {
-                snprintf(version_str, sizeof(version_str), "RCM -.- nRF-- E+");
+                snprintf(version_str, sizeof(version_str), "RCM %02d.%02d nRF-- E+",
+                         (APP_FIRMWARE_VERSION >> 8) & 0xFFu, APP_FIRMWARE_VERSION & 0xFFu);
             }
             display_show_splash(version_str);
         }
