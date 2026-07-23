@@ -370,6 +370,20 @@ int app_init(app_context_t *app)
          * ethernet comms only after boot"). */
         (void)detected;
     }
+    /* NEW CODE, 2026-07-22 -- not in the original or any earlier version
+     * of this port. Per explicit instruction: explicitly activate the
+     * splash form as the very first Genie command, before writing any
+     * text to it. Neither the original nor this port ever did this --
+     * both just assumed the display was ALREADY sitting on the splash
+     * form (its own configured power-on default) and wrote straight to
+     * GENIE_SPLASH_STR. That assumption holds on a genuine cold power-on
+     * of the display, but not on a warm debugger reattach/non-power-
+     * reset scenario, where the display can still be sitting on whatever
+     * form it was last showing (e.g. MAIN) -- writing to GENIE_SPLASH_STR
+     * in that state sends a real, ACK'd command to a widget that isn't
+     * currently on screen, which matches the reported symptom exactly
+     * (good ACKs, nothing visible). */
+    display_activate_form(GENIE_FORM_SPLASHSCREEN);
     display_show_splash("Starting up");
 #endif
 #if APP_ENABLE_NRF_SPI
