@@ -113,7 +113,7 @@ int app_init(app_context_t *app)
      * very top of app_init(), before any subsystem init (including
      * storage/settings load, which the original also runs after this
      * delay), to match. */
-    SDK_DelayAtLeastUs(2000000U, SystemCoreClock);
+    SDK_DelayAtLeastUs(4000000U, SystemCoreClock);
 
     /* Was `checkInterval = MS_TIMER + 2000; checkInterval2 = MS_TIMER + 15000;`
      * -- battery status check first fires 2s after boot, GPS signal
