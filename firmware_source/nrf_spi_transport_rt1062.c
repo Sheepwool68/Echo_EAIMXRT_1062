@@ -90,11 +90,16 @@
 #define NRF_CS_GPIO             GPIO1
 #define NRF_CS_PIN              28u
 
-/* CONFIRMED from pin_mux.h: GPIO_SD_B1_02 = GPIO3 pin 2 -- actual
- * ready/attention input pin (was PBDR bit 3 on the Rabbit). Not part
- * of the SPI bus itself. */
+/* CORRECTED 2026-07-23 -- was wired to GPIO_SD_B1_02 (GPIO3 pin 2) in
+ * software the whole time; the actual physical trace routes to
+ * GPIO_SD_B0_02 = GPIO3 pin 14 (confirmed directly against
+ * fsl_iomuxc.h's IOMUXC_GPIO_SD_B0_02_GPIO3_IO14 macro, not guessed).
+ * This was the real root cause of NRF_READY never being seen HIGH by
+ * RT1062 despite the nRF confirmed (via Segger) actively driving its
+ * own READY pin high -- RT1062 was reading a completely different,
+ * unconnected pin the entire time. Not part of the SPI bus itself. */
 #define NRF_READY_GPIO          GPIO3
-#define NRF_READY_PIN           2u
+#define NRF_READY_PIN           14u
 
 /* -------------------------------------------------------------------
  * Static state (single instance; extend to a context struct if you
@@ -161,6 +166,18 @@ static void rt1062_switch_to_mode0(LPSPI_Type *base)
     LPSPI_Enable(base, true);
 }
 
+/* Non-static wrappers around the two functions just above, for
+ * app_init.c's GPS bus-priming read -- see header comment. */
+void nrf_spi_transport_switch_bus_mode1(void)
+{
+    rt1062_switch_to_mode1(NRF_LPSPI_BASE);
+}
+
+void nrf_spi_transport_switch_bus_mode0(void)
+{
+    rt1062_switch_to_mode0(NRF_LPSPI_BASE);
+}
+
 static int rt1062_transfer(void *ctx, const uint8_t *tx, uint8_t *rx, size_t len)
 {
     rt1062_nrf_hw_ctx_t *hw = (rt1062_nrf_hw_ctx_t *)ctx;
@@ -176,9 +193,14 @@ static int rt1062_transfer(void *ctx, const uint8_t *tx, uint8_t *rx, size_t len
      * outside the LPSPI peripheral now via cs_assert()/cs_deassert(). */
     xfer.configFlags = kLPSPI_MasterPcsContinuous;
 
-    rt1062_switch_to_mode1(hw->base);
+    /* REMOVED FOR TEST, 2026-07-23, per explicit instruction -- isolating
+     * whether the per-transfer LPSPI_Enable(false)->TCR rewrite->
+     * LPSPI_Enable(true) cycle itself (previously bracketing every nRF
+     * transfer to get Mode 1) was glitching the shared bus while CS was
+     * already asserted. Bus is now set statically to Mode 1 in
+     * board/peripherals.c for this test (GPS also disabled), so no
+     * per-transfer switch is needed -- this just transfers directly. */
     status = LPSPI_MasterTransferBlocking(hw->base, &xfer);
-    rt1062_switch_to_mode0(hw->base);
 
     return (status == kStatus_Success) ? 0 : -1;
 }

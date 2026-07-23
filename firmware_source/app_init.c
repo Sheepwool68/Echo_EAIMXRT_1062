@@ -425,6 +425,20 @@ int app_init(app_context_t *app)
 #if APP_ENABLE_BOARD_IO
     fan_on();
 #endif
+    /* TESTED AND REMOVED, 2026-07-23 -- a 1000ms delay right here made no
+     * difference to standalone boot's fw_version failure, ruling out
+     * "RT1062 is reaching this point before the nRF has finished its own
+     * boot" as the explanation (a real nRF boot would complete in
+     * milliseconds, not need a full extra second). Board is confirmed
+     * self-powered regardless of probe attachment, ruling out a
+     * power-rail-sequencing difference too. */
+    /* REINSTATED, 2026-07-23 -- removing this (with GPS disabled, bus
+     * statically at Mode 1, nRF per-transfer switch also removed) gave
+     * fw_version=0xFF on both probe and no-probe, worse than with it in
+     * -- confirms this read is genuinely required regardless of GPS/mode
+     * configuration, not just a bare-Mode-0-specific need. Runs at
+     * whatever mode the bus is currently set to (Mode 1, statically, for
+     * this test) -- neo_m8t's own transport never touches mode itself. */
     {
         neo_m8t_transport_t gps_prime = neo_m8t_transport_rt1062_init();
         uint8_t randomstr[20];
@@ -553,6 +567,12 @@ int app_init(app_context_t *app)
      * after DS3231 setup in the original (both on the same I2C bus).
      * See bms_init.c for the byte-for-byte ported sequence. */
     bms_init(&app->board_version);
+    /* TEMPORARY DIAGNOSTIC, 2026-07-22 (re-applied 2026-07-23), per
+     * explicit report ("V=0" over TCP, confirmed wrong -- battery is not
+     * actually at 0%) -- app_update_battery_percent() (app_loop.c) is
+     * gated on board_version>=32; this confirms whether that gate is
+     * even passing. */
+    PRINTF("BMS: board_version=%d (need >=32 for battery reads)\r\n", app->board_version);
 #endif
 
 #if APP_ENABLE_BOARD_IO
@@ -715,6 +735,21 @@ int app_init(app_context_t *app)
         return -1;
     }
     app->last_touch_time_s = (uint32_t)rtc_datetime_to_epoch(&app->current_time);
+
+    /* RE-APPLIED 2026-07-23 (originally 444b37f, reverted during the
+     * regression cascade and never re-applied until now) -- was
+     * `LoadSettings()`'s `set_time_nrf = 1;` (ACTIVERFID_V1.02_UHF.c line
+     * 2508), runs UNCONDITIONALLY at boot in the original, well before
+     * any GPS fix could possibly exist, so the nRF gets the DS3231's
+     * already-known time immediately on the first post-boot rollover
+     * edge rather than waiting on GPS (which may never get a fix at
+     * all, e.g. tested indoors, or is disabled entirely as it currently
+     * is). Without this, app->set_time_nrf_pending only ever gets set
+     * from a GPS-fix success (app_loop.c) or an explicit PC time-set
+     * command (app_pc_dispatch.c) -- confirmed today to be the actual
+     * reason the nRF was never receiving a time push at all in this
+     * session's GPS-disabled test configuration. */
+    app->set_time_nrf_pending = 1;
 #endif
 
 #if APP_ENABLE_DISPLAY

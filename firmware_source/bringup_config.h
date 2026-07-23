@@ -278,7 +278,7 @@
  * original's own `Settings.AutoSetGPSTime = 0` boot default -- with
  * APP_ENABLE_STORAGE also off, this doesn't persist across reboots, so
  * it needs a touchscreen tap each boot until storage is staged. */
-#define APP_ENABLE_GPS         1
+#define APP_ENABLE_GPS         0
 
 /* Board GPIO-only inits (buzzer, reader shutdown/power, cooling fan) --
  * NOT part of the original staged list above; these were called

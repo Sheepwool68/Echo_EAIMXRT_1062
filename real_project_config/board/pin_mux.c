@@ -32,6 +32,7 @@ pin_labels:
 - {pin_num: H11, pin_signal: GPIO_AD_B1_13, label: 'SAI1_TXD/J37[1]/DC_I2S1_TX_D0/J23[17]/BT_PCM_TXD/U9[6]/CSI_D4/J46[3]', identifier: CSI_D4;SPI_SDI}
 - {pin_num: G12, pin_signal: GPIO_AD_B1_14, label: 'SAI1_TX_BCLK/J35[1]/DC_I2S1_TX_BCLK/U23[23]/BT_PCM_BCLK/U9[7]/U10[17]/CSI_D3/J46[4]', identifier: CSI_D3;SPI_SDO}
 - {pin_num: J14, pin_signal: GPIO_AD_B1_15, label: 'SAI1_TX_SYNC/J36[1]/DC_I2S1_TX_SYNC/U23[16]/BT_PCM_SYNC/U9[8]/U10[16]/CSI_D2/J46[6]', identifier: CSI_D2;SPI_CLK}
+- {pin_num: J1, pin_signal: GPIO_SD_B0_02, label: 'SD1_D0/J22[7]/J17[4]', identifier: SD1_D0;NRF_READY}
 - {pin_num: K1, pin_signal: GPIO_SD_B0_03, label: 'SD1_D1/J22[8]/J17[5]', identifier: SD1_D1;READER_SHUTDOWN}
 - {pin_num: J2, pin_signal: GPIO_SD_B0_05, label: 'SD1_D3/J22[2]', identifier: SD1_D3;READER_PWR}
 - {pin_num: M3, pin_signal: GPIO_SD_B1_02, label: 'FlexSPI_D1_B/U20[E3]', identifier: FlexSPI_D1_B;NRF_READY}
@@ -49,10 +50,10 @@ pin_labels:
 #include "pin_mux.h"
 
 /* FUNCTION ************************************************************************************************************
- * 
+ *
  * Function Name : BOARD_InitBootPins
  * Description   : Calls initialization functions.
- * 
+ *
  * END ****************************************************************************************************************/
 void BOARD_InitBootPins(void) {
     BOARD_InitPins();
@@ -81,7 +82,7 @@ BOARD_InitPins:
   - {pin_num: F11, peripheral: GPIO1, signal: 'gpio_io, 04', pin_signal: GPIO_AD_B0_04, identifier: SPI_CS2, direction: OUTPUT, pull_keeper_select: Keeper, speed: MHZ_100_01,
     drive_strength: R0_7, slew_rate: Fast}
   - {pin_num: G12, peripheral: LPSPI3, signal: SDO, pin_signal: GPIO_AD_B1_14, identifier: SPI_SDO, speed: MHZ_100_01, drive_strength: R0_7, slew_rate: Fast}
-  - {pin_num: H11, peripheral: LPSPI3, signal: SDI, pin_signal: GPIO_AD_B1_13, identifier: SPI_SDI, hysteresis_enable: Enable, pull_keeper_enable: Disable}
+  - {pin_num: H11, peripheral: LPSPI3, signal: SDI, pin_signal: GPIO_AD_B1_13, identifier: SPI_SDI, hysteresis_enable: Enable, pull_keeper_enable: Enable}
   - {pin_num: D14, peripheral: LPUART5, signal: RX, pin_signal: GPIO_B1_13, identifier: UART5_RXD}
   - {pin_num: D13, peripheral: LPUART5, signal: TX, pin_signal: GPIO_B1_12, identifier: UART5_TXD}
   - {pin_num: L13, peripheral: LPUART8, signal: TX, pin_signal: GPIO_AD_B1_10, identifier: UART8_TXD}
@@ -96,21 +97,21 @@ BOARD_InitPins:
   - {pin_num: P2, peripheral: GPIO3, signal: 'gpio_io, 04', pin_signal: GPIO_SD_B1_04, identifier: BUTTON_LED, direction: OUTPUT, gpio_init_state: 'true', pull_up_down_config: no_init,
     pull_keeper_enable: Disable}
   - {pin_num: K10, peripheral: GPIO1, signal: 'gpio_io, 23', pin_signal: GPIO_AD_B1_07, identifier: TRIGGER, direction: INPUT, gpio_interrupt: kGPIO_IntRisingEdge,
-    speed: MHZ_200}
-  - {pin_num: M3, peripheral: GPIO3, signal: 'gpio_io, 02', pin_signal: GPIO_SD_B1_02, identifier: NRF_READY, direction: INPUT}
+    pull_keeper_select: Keeper, speed: MHZ_200}
   - {pin_num: E3, peripheral: GPIO4, signal: 'gpio_io, 00', pin_signal: GPIO_EMC_00, identifier: USB_STATUS, direction: INPUT}
   - {pin_num: A11, peripheral: GPIO2, signal: 'gpio_io, 16', pin_signal: GPIO_B1_00, identifier: USB_DTR, direction: OUTPUT}
+  - {pin_num: J1, peripheral: GPIO3, signal: 'gpio_io, 14', pin_signal: GPIO_SD_B0_02, identifier: NRF_READY, direction: INPUT, software_input_on: Enable, pull_keeper_select: Pull}
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS ***********
  */
 
 /* FUNCTION ************************************************************************************************************
  *
  * Function Name : BOARD_InitPins
- * Description   : 
+ * Description   :
  *
  * END ****************************************************************************************************************/
 void BOARD_InitPins(void) {
-  CLOCK_EnableClock(kCLOCK_Iomuxc);           
+  CLOCK_EnableClock(kCLOCK_Iomuxc);
 
   /* GPIO configuration of PPS on GPIO_AD_B0_02 (pin M11) */
   gpio_pin_config_t PPS_config = {
@@ -208,15 +209,6 @@ void BOARD_InitPins(void) {
   /* Initialize GPIO functionality on GPIO_B1_00 (pin A11) */
   GPIO_PinInit(GPIO2, 16U, &USB_DTR_config);
 
-  /* GPIO configuration of NRF_READY on GPIO_SD_B1_02 (pin M3) */
-  gpio_pin_config_t NRF_READY_config = {
-      .direction = kGPIO_DigitalInput,
-      .outputLogic = 0U,
-      .interruptMode = kGPIO_NoIntmode
-  };
-  /* Initialize GPIO functionality on GPIO_SD_B1_02 (pin M3) */
-  GPIO_PinInit(GPIO3, 2U, &NRF_READY_config);
-
   /* GPIO configuration of BUTTON_LED on GPIO_SD_B1_04 (pin P2) */
   gpio_pin_config_t BUTTON_LED_config = {
       .direction = kGPIO_DigitalOutput,
@@ -225,6 +217,15 @@ void BOARD_InitPins(void) {
   };
   /* Initialize GPIO functionality on GPIO_SD_B1_04 (pin P2) */
   GPIO_PinInit(GPIO3, 4U, &BUTTON_LED_config);
+
+  /* GPIO configuration of NRF_READY on GPIO_SD_B0_02 (pin J1) */
+  gpio_pin_config_t NRF_READY_config = {
+      .direction = kGPIO_DigitalInput,
+      .outputLogic = 0U,
+      .interruptMode = kGPIO_NoIntmode
+  };
+  /* Initialize GPIO functionality on GPIO_SD_B0_02 (pin J1) */
+  GPIO_PinInit(GPIO3, 14U, &NRF_READY_config);
 
   /* GPIO configuration of READER_SHUTDOWN on GPIO_SD_B0_03 (pin K1) */
   gpio_pin_config_t READER_SHUTDOWN_config = {
@@ -253,85 +254,69 @@ void BOARD_InitPins(void) {
   /* Initialize GPIO functionality on GPIO_EMC_00 (pin E3) */
   GPIO_PinInit(GPIO4, 0U, &USB_STATUS_config);
 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_02_GPIO1_IO02, 1U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_03_GPIO1_IO03, 1U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_04_GPIO1_IO04, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_12_LPUART1_TX, 1U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_13_LPUART1_RX, 1U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_00_LPI2C1_SCL, 1U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_01_LPI2C1_SDA, 1U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_02_LPUART2_TX, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_03_LPUART2_RX, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_04_GPIO1_IO20, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_05_GPIO1_IO21, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_06_GPIO1_IO22, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_07_GPIO1_IO23, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_08_GPIO1_IO24, 1U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_10_LPUART8_TX, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_11_LPUART8_RX, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_12_GPIO1_IO28, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_13_LPSPI3_SDI, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_14_LPSPI3_SDO, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_02_GPIO1_IO02, 1U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_03_GPIO1_IO03, 1U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_04_GPIO1_IO04, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_12_LPUART1_TX, 1U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_13_LPUART1_RX, 1U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_00_LPI2C1_SCL, 1U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_01_LPI2C1_SDA, 1U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_02_LPUART2_TX, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_03_LPUART2_RX, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_04_GPIO1_IO20, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_05_GPIO1_IO21, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_06_GPIO1_IO22, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_07_GPIO1_IO23, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_08_GPIO1_IO24, 1U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_10_LPUART8_TX, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_11_LPUART8_RX, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_12_GPIO1_IO28, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_13_LPSPI3_SDI, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_14_LPSPI3_SDO, 0U);
 #if FSL_IOMUXC_DRIVER_VERSION >= MAKE_VERSION(2, 0, 4)
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_15_LPSPI3_SCK, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_15_LPSPI3_SCK, 0U);
 #endif
-  IOMUXC_SetPinMux(IOMUXC_GPIO_B1_00_GPIO2_IO16, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_B1_12_LPUART5_TX, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_B1_13_LPUART5_RX, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_EMC_00_GPIO4_IO00, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B0_03_GPIO3_IO15, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B0_05_GPIO3_IO17, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B1_02_GPIO3_IO02, 0U); 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B1_04_GPIO3_IO04, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_B1_00_GPIO2_IO16, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_B1_12_LPUART5_TX, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_B1_13_LPUART5_RX, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_EMC_00_GPIO4_IO00, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B0_02_GPIO3_IO14, 1U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B0_03_GPIO3_IO15, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B0_05_GPIO3_IO17, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B1_04_GPIO3_IO04, 0U);
   IOMUXC_GPR->GPR26 = ((IOMUXC_GPR->GPR26 &
-    (~(BOARD_INITPINS_IOMUXC_GPR_GPR26_GPIO_MUX1_GPIO_SEL_MASK))) 
-      | IOMUXC_GPR_GPR26_GPIO_MUX1_GPIO_SEL(0x00U) 
+    (~(BOARD_INITPINS_IOMUXC_GPR_GPR26_GPIO_MUX1_GPIO_SEL_MASK)))
+      | IOMUXC_GPR_GPR26_GPIO_MUX1_GPIO_SEL(0x00U)
     );
   IOMUXC_GPR->GPR27 = ((IOMUXC_GPR->GPR27 &
-    (~(BOARD_INITPINS_IOMUXC_GPR_GPR27_GPIO_MUX2_GPIO_SEL_MASK))) 
-      | IOMUXC_GPR_GPR27_GPIO_MUX2_GPIO_SEL(0x00U) 
+    (~(BOARD_INITPINS_IOMUXC_GPR_GPR27_GPIO_MUX2_GPIO_SEL_MASK)))
+      | IOMUXC_GPR_GPR27_GPIO_MUX2_GPIO_SEL(0x00U)
     );
   IOMUXC_GPR->GPR28 = ((IOMUXC_GPR->GPR28 &
-    (~(BOARD_INITPINS_IOMUXC_GPR_GPR28_GPIO_MUX3_GPIO_SEL_MASK))) 
-      | IOMUXC_GPR_GPR28_GPIO_MUX3_GPIO_SEL(0x00U) 
+    (~(BOARD_INITPINS_IOMUXC_GPR_GPR28_GPIO_MUX3_GPIO_SEL_MASK)))
+      | IOMUXC_GPR_GPR28_GPIO_MUX3_GPIO_SEL(0x00U)
     );
   IOMUXC_GPR->GPR29 = ((IOMUXC_GPR->GPR29 &
-    (~(BOARD_INITPINS_IOMUXC_GPR_GPR29_GPIO_MUX4_GPIO_SEL_MASK))) 
-      | IOMUXC_GPR_GPR29_GPIO_MUX4_GPIO_SEL(0x00U) 
+    (~(BOARD_INITPINS_IOMUXC_GPR_GPR29_GPIO_MUX4_GPIO_SEL_MASK)))
+      | IOMUXC_GPR_GPR29_GPIO_MUX4_GPIO_SEL(0x00U)
     );
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_02_GPIO1_IO02, 0x20B1U); 
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_03_GPIO1_IO03, 0x20B0U); 
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_04_GPIO1_IO04, 0x1079U); 
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_13_LPUART1_RX, 0x10B0U); 
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_00_LPI2C1_SCL, 0xE871U); 
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_01_LPI2C1_SDA, 0xE871U); 
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_06_GPIO1_IO22, 0xB0U); 
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_07_GPIO1_IO23, 0x10F0U); 
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_08_GPIO1_IO24, 0xA0B0U); 
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_12_GPIO1_IO28, 0x1079U); 
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_13_LPSPI3_SDI, 0x0100B0U); 
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_14_LPSPI3_SDO, 0x1079U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_02_GPIO1_IO02, 0x20B1U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_03_GPIO1_IO03, 0x20B0U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_04_GPIO1_IO04, 0x1079U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_13_LPUART1_RX, 0x10B0U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_00_LPI2C1_SCL, 0xE871U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_01_LPI2C1_SDA, 0xE871U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_06_GPIO1_IO22, 0xB0U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_07_GPIO1_IO23, 0x10F0U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_08_GPIO1_IO24, 0xA0B0U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_12_GPIO1_IO28, 0x1079U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_13_LPSPI3_SDI, 0x0110B0U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_14_LPSPI3_SDO, 0x1079U);
 #if FSL_IOMUXC_DRIVER_VERSION >= MAKE_VERSION(2, 0, 4)
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_15_LPSPI3_SCK, 0x1079U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_15_LPSPI3_SCK, 0x1079U);
 #endif
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_SD_B0_02_GPIO3_IO14, 0x30B0U);
   IOMUXC_SetPinConfig(IOMUXC_GPIO_SD_B1_04_GPIO3_IO04, 0xB0U);
-  /* NRF_READY (GPIO3 pin 2, GPIO_SD_B1_02) pad config REVERTED
-   * 2026-07-20 -- was added 2026-07-20 (same day) as a precautionary
-   * fix for a "READY asserts without a chip read" symptom that was
-   * subsequently found NOT to be a bug at all (READY genuinely means
-   * "nRF SPI armed and ready to talk", not "tag read available" --
-   * see project memory). This pin worked correctly for this entire
-   * session's nRF investigation before this SetPinConfig call was
-   * added, and immediately after it was added, NRF_READY was reported
-   * completely stuck (no edge-trigger trace at all, not even the
-   * "went HIGH" print that fired constantly before). Never based on a
-   * confirmed hardware need -- reused an unverified value (0x10B0)
-   * hand-picked from an unrelated pin rather than a decoded register
-   * value, flagged as a real risk at the time. Reverting to no
-   * SetPinConfig call at all (silicon power-on-reset default, the
-   * state this pin ran in for every other nRF success this session)
-   * to test whether that alone restores it before trying anything
-   * else. */
 }
 /***********************************************************************************************************************
  * EOF
