@@ -83,7 +83,7 @@ int app_init(app_context_t *app)
      * original is the REST of main() after program_init() returns, by
      * which point the original had already turned the buzzer off. */
     buzzer_rt1062_init();
-    buzzer_on();
+    //buzzer_on();
 
     /* Position CONFIRMED from the original, ACTIVERFID_V1.02_UHF.c
      * line 3456, main(): `BitWrPortI(PBDR,&PBDRShadow,1,6); //green` --
@@ -417,19 +417,11 @@ int app_init(app_context_t *app)
      * (unlike the bring-up test, where this ran before that init call). */
     /* Was `BitWrPortI(PEDR,...,1,5); //fan on` (ACTIVERFID_V1.02_UHF.c
      * line 3468), immediately before this exact GPS-priming block. Added
-     * 2026-07-22 -- this port's own boot audit found it missing; the
-     * stale reason on file for skipping it ("NRF_SPI is currently off",
-     * see the msDelay(2500) comment below) no longer applies, that flag
-     * has been on for a long time. fan_off()'s matching call is placed
-     * right after the splash string + contrast write below, NOT after a
-     * full 2.5s delay like the original -- see that comment for why
-     * (the display-blocking delay was deliberately moved
-     * elsewhere per an explicit "main screen in 4 seconds" requirement,
-     * so bracketing fan-on for the original's full visible-splash
-     * duration would reintroduce that same problem). Net effect: fan
-     * runs for this block's real (short, sub-second) duration instead of
-     * the original's ~2.7s -- a disclosed, deliberate timing deviation,
-     * not a fidelity gap. */
+     * 2026-07-22 -- this port's own boot audit found it missing. Now
+     * brackets the SAME real duration as the original: fan_off() (below,
+     * after the splash string + contrast write) fires after the real
+     * 2.5s delay restored to its exact original position -- no timing
+     * deviation, matches source exactly. */
 #if APP_ENABLE_BOARD_IO
     fan_on();
 #endif
@@ -501,16 +493,23 @@ int app_init(app_context_t *app)
 #endif
     }
 
+    /* Was `msDelay(2500);` (ACTIVERFID_V1.02_UHF.c line 3479) -- RESTORED
+     * 2026-07-22 to its exact original position, right after the splash
+     * string + contrast write, per explicit instruction. A DUPLICATE
+     * SDK_DelayAtLeastUs(2500000...) was previously added down in the
+     * APP_ENABLE_GPS block (see that call site) when this delay was
+     * moved away from here for a "main screen in 4 seconds" requirement
+     * -- that duplicate is removed below, this is now the ONLY 2.5s
+     * delay, at its real source position. This does mean MAIN-form
+     * activation (further down this function) is now ~2.5s later again,
+     * same as the original -- if the 4-second budget still matters,
+     * that's a separate, explicit decision to make, not silently
+     * re-broken by this fidelity fix. */
+    SDK_DelayAtLeastUs(2500000U, SystemCoreClock);
+
     /* Was `BitWrPortI(PEDR,...,0,5); //fan off` (ACTIVERFID_V1.02_UHF.c
-     * line 3481) -- see fan_on()'s own comment above (right before the
-     * GPS-priming block) for the disclosed timing deviation: this fires
-     * right after the splash string + contrast write instead of after
-     * the original's full 2.5s post-splash delay, since that delay is
-     * deliberately not reproduced at this position (moved elsewhere per
-     * an explicit "main screen in 4 seconds" requirement). Placed
-     * unconditionally on APP_ENABLE_BOARD_IO alone (not nested under
-     * APP_ENABLE_DISPLAY like the contrast write above) so the fan
-     * always turns back off even if APP_ENABLE_DISPLAY is off. */
+     * line 3481) -- now fires at its exact original position, right
+     * after the real 2.5s delay above, matching source exactly. */
 #if APP_ENABLE_BOARD_IO
     fan_off();
 #endif
@@ -769,26 +768,14 @@ int app_init(app_context_t *app)
      * tank is a separately-timed periodic check in app_loop.c), so
      * this is safe to reorder. */
 #if APP_ENABLE_GPS
-    /* CONFIRMED from the original, ACTIVERFID_V1.02_UHF.c line 3479,
-     * main(): `msDelay(2500);` -- a real, explicit 2.5-second delay,
-     * positioned right after the nRF-fw-version splash/contrast write
-     * and BEFORE fan-off, DS3231 ISR install, TCPIPOpenSockets(),
-     * httpc_init(), and finally set_UBX() (line 3504). This is a
-     * discrete, position-anchored delay in the original's own design,
-     * not a "wait until N ms since boot" calculation -- replaces an
-     * earlier version of this fix (2026-07-16) that invented a
-     * systick-based since-boot gate from a rough paraphrase of the
-     * requirement instead of checking the actual source first, and
-     * used the wrong value (2000ms, not the source's real 2500ms).
-     * The original's other work in this exact window (nRF fw-version
-     * query/splash, fan on/off, TCPIPOpenSockets(), httpc_init()) isn't
-     * replicated here -- NRF_SPI is currently off, and
-     * TCPIPOpenSockets()/httpc_init()'s equivalents already ran earlier
-     * in this port's own boot order (see the TCP block above) -- this
-     * only ports the confirmed delay value itself, at the position
-     * closest to its original intent (immediately before set_UBX()'s
-     * equivalent). */
-    SDK_DelayAtLeastUs(2500000U, SystemCoreClock);
+    /* The duplicate SDK_DelayAtLeastUs(2500000...) that used to sit
+     * here (a stand-in for the original's real msDelay(2500), moved to
+     * this position on 2026-07-16 as part of the "main screen in 4
+     * seconds" reordering below) is REMOVED 2026-07-22 -- the real
+     * 2.5s delay is now restored to its actual original position
+     * (right after the splash string + contrast write, above, before
+     * fan-off), per explicit instruction. Keeping a second copy here
+     * would double the real delay for no reason. */
     gps_configure_timepulse(); /* was set_UBX() */
 #endif
 
