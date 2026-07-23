@@ -401,6 +401,24 @@ int app_init(app_context_t *app)
      * nrf_spi_transport_rt1062_init() just above, so no separate GPIO
      * write is needed here to avoid bus contention during this read
      * (unlike the bring-up test, where this ran before that init call). */
+    /* Was `BitWrPortI(PEDR,...,1,5); //fan on` (ACTIVERFID_V1.02_UHF.c
+     * line 3468), immediately before this exact GPS-priming block. Added
+     * 2026-07-22 -- this port's own boot audit found it missing; the
+     * stale reason on file for skipping it ("NRF_SPI is currently off",
+     * see the msDelay(2500) comment below) no longer applies, that flag
+     * has been on for a long time. fan_off()'s matching call is placed
+     * right after the splash string + contrast write below, NOT after a
+     * full 2.5s delay like the original -- see that comment for why
+     * (the display-blocking delay was deliberately moved
+     * elsewhere per an explicit "main screen in 4 seconds" requirement,
+     * so bracketing fan-on for the original's full visible-splash
+     * duration would reintroduce that same problem). Net effect: fan
+     * runs for this block's real (short, sub-second) duration instead of
+     * the original's ~2.7s -- a disclosed, deliberate timing deviation,
+     * not a fidelity gap. */
+#if APP_ENABLE_BOARD_IO
+    fan_on();
+#endif
     {
         neo_m8t_transport_t gps_prime = neo_m8t_transport_rt1062_init();
         uint8_t randomstr[20];
@@ -457,8 +475,31 @@ int app_init(app_context_t *app)
                      (APP_FIRMWARE_VERSION >> 8) & 0xFFu, APP_FIRMWARE_VERSION & 0xFFu, fw_version);
             display_show_splash(version_str);
         }
+        /* Was `genieWriteContrast(Settings.Brightness);` -- right after
+         * the splash version string in the original. Added 2026-07-22;
+         * this port's own boot audit found it missing entirely (not just
+         * misplaced) -- display_set_contrast() is correctly wired for
+         * the dim slider/wake-from-dim logic elsewhere, but nothing ever
+         * called it at boot, so the screen ran at whatever the Genie
+         * display's own power-on default was instead of the saved
+         * Settings.Brightness. */
+        display_set_contrast(app->settings.brightness);
 #endif
     }
+
+    /* Was `BitWrPortI(PEDR,...,0,5); //fan off` (ACTIVERFID_V1.02_UHF.c
+     * line 3481) -- see fan_on()'s own comment above (right before the
+     * GPS-priming block) for the disclosed timing deviation: this fires
+     * right after the splash string + contrast write instead of after
+     * the original's full 2.5s post-splash delay, since that delay is
+     * deliberately not reproduced at this position (moved elsewhere per
+     * an explicit "main screen in 4 seconds" requirement). Placed
+     * unconditionally on APP_ENABLE_BOARD_IO alone (not nested under
+     * APP_ENABLE_DISPLAY like the contrast write above) so the fan
+     * always turns back off even if APP_ENABLE_DISPLAY is off. */
+#if APP_ENABLE_BOARD_IO
+    fan_off();
+#endif
 
     /* Was `//comms_NRF(0x0D);` at this exact boot position (line 3513) --
      * FIDELITY FIX, 2026-07-18: the original ships this call permanently
