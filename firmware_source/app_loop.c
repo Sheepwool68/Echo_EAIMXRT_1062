@@ -1638,11 +1638,28 @@ static void process_nrf_spi(app_context_t *app)
      * poll/retrieve dispatch below. static local, not app state -- pure
      * diagnostic, nothing downstream depends on it. */
     {
-        static int s_ready_was_high = 0;
+        /* RE-ENABLED 2026-07-22, per explicit request ("put a fucking
+         * printf on nrf_ready") -- bypasses this file's own silenced
+         * PRINTF macro (see the file header redirect comment) via
+         * debug_printf() directly, same pattern as ENET_PRINTF. Prints
+         * on every HIGH->LOW or LOW->HIGH transition, plus once
+         * unconditionally on the very first call so the initial state at
+         * boot is visible too -- not every single call (this runs every
+         * main-loop iteration, so an unconditional print would flood the
+         * console). If this line never prints "went HIGH" at all during
+         * a physical tag scan, the raw GPIO3 pin 2 signal itself isn't
+         * toggling -- see rt1062_read_ready_line()
+         * (nrf_spi_transport_rt1062.c:206) for the raw GPIO_PinRead()
+         * call this wraps, and process_nrf_spi() just below (app_loop.c)
+         * for where the poll/retrieve dispatch itself is decided --
+         * good breakpoint spots for stepping through this by hand
+         * instead of via PRINTF. */
+        static int s_ready_was_high = -1; /* -1 = "never read yet", forces the first call to always print */
         int ready_now = app->nrf_transport.read_ready_line(app->nrf_transport.hw_ctx);
-        if (ready_now && !s_ready_was_high) {
-            /* PRINTF silenced 2026-07-20, per explicit request ("clean
-             * up this shit, I dont want to see nrf printf anymore"). */
+        if (ready_now != s_ready_was_high) {
+            debug_printf("NRF_READY: %s at t=%lu ms\r\n",
+                   ready_now ? "went HIGH" : "went LOW",
+                   (unsigned long)systick_ms_now());
         }
         s_ready_was_high = ready_now;
     }
