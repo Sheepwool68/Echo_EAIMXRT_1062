@@ -113,7 +113,11 @@ int app_init(app_context_t *app)
      * very top of app_init(), before any subsystem init (including
      * storage/settings load, which the original also runs after this
      * delay), to match. */
-    SDK_DelayAtLeastUs(4000000U, SystemCoreClock);
+    SDK_DelayAtLeastUs(3000000U, SystemCoreClock); /* reduced from 4000000U
+        2026-07-23, per explicit instruction -- the DS3231->nRF time sync
+        below (also added this same change) needs up to 1 more second
+        waiting for a real TIMEPULSE edge, keeping total boot-lock time
+        in the same ballpark as before rather than stacking on top of it. */
 
     /* Was `checkInterval = MS_TIMER + 2000; checkInterval2 = MS_TIMER + 15000;`
      * -- battery status check first fires 2s after boot, GPS signal
@@ -394,6 +398,21 @@ int app_init(app_context_t *app)
      * init failure either) -- if the physical link is dead, the
      * get-fw-version call just below will time out and report it. */
     app->nrf_transport = nrf_spi_transport_rt1062_init();
+
+    /* FOUND MISSING 2026-07-23 -- spi_record_state must start in the POLL
+     * phase (1), matching the original's own spi_record_state which is
+     * passed directly as the comms_NRF() command byte (0x01 = poll for
+     * records) whenever PBDR3/NRF_READY is high. It was never explicitly
+     * initialized here, so memset() left it at 0. That was previously
+     * masked by an `else`-branch in process_nrf_spi() that caught state 0,
+     * did a harmless empty retrieve, and unconditionally reset state to 1
+     * -- self-correcting after one spurious pass. The 2026-07-23
+     * edge-gated refactor changed that `else` to an exact `if(state==2)`,
+     * removing the accidental self-correction, so state stayed stuck at 0
+     * forever and the 0x01 poll never fired at all (symptom: NRF_READY
+     * goes HIGH on a chip read but no poll/retrieve happens). Initialize
+     * it correctly here instead of relying on that accident. */
+    app->spi_record_state = 1;
 
     /* GPS BUS-PRIMING STEP -- found in the original Dynamic C main(),
      * immediately before comms_NRF(0x0E):
@@ -744,12 +763,49 @@ int app_init(app_context_t *app)
      * already-known time immediately on the first post-boot rollover
      * edge rather than waiting on GPS (which may never get a fix at
      * all, e.g. tested indoors, or is disabled entirely as it currently
-     * is). Without this, app->set_time_nrf_pending only ever gets set
-     * from a GPS-fix success (app_loop.c) or an explicit PC time-set
-     * command (app_pc_dispatch.c) -- confirmed today to be the actual
-     * reason the nRF was never receiving a time push at all in this
-     * session's GPS-disabled test configuration. */
+     * is). Kept as the fallback path for the new synchronous attempt
+     * right below -- if that doesn't land (no real TIMEPULSE edge in
+     * time, or APP_ENABLE_NRF_SPI off), this flag stays set and the
+     * main loop's own rollover-driven push (process_time_sync()) picks
+     * it up later, same as before. */
     app->set_time_nrf_pending = 1;
+
+    /* CHANGED 2026-07-23, per explicit instruction -- the original DC
+     * firmware only ever pushed this from its own main loop too, but
+     * this port has 3+ seconds of dead time right here in app_init(),
+     * before the loop (and before anything ever starts polling
+     * NRF_READY) even starts -- plenty of margin to do this
+     * synchronously and know it actually landed, rather than racing the
+     * loop's very first pass (which begins polling NRF_READY
+     * immediately) against a send that might still be in flight.
+     * Blocking wait for a genuine TIMEPULSE rollover edge (max ~1.1s
+     * margin over the 1Hz signal itself), re-read DS3231 fresh right at
+     * that edge (same pattern process_time_sync() itself uses), then
+     * send directly -- no deferral. On success, clears
+     * set_time_nrf_pending so the main loop doesn't also resend the
+     * same value on its own next rollover. */
+#if APP_ENABLE_NRF_SPI
+    {
+        uint32_t edge_ms = 0;
+        uint32_t wait_start_ms = systick_ms_now();
+
+        while (systick_ms_now() - wait_start_ms <= 1100u) {
+            if (ds3231_rt1062_poll_rollover(&edge_ms)) {
+                app->ds_last_edge_ms = edge_ms;
+                app->ds_rollover_seen = 1;
+                if (ds3231_rt1062_read(&app->current_time) == 0) {
+                    uint32_t nrf_time = rtc_datetime_to_nrf_time(&app->current_time);
+                    nrf_spi_send_datetime(&app->nrf_transport, nrf_time);
+                    app->set_time_nrf_pending = 0;
+                }
+                break;
+            }
+        }
+        /* else: no real TIMEPULSE edge within ~1.1s -- set_time_nrf_pending
+         * stays 1 (set above), main loop's process_time_sync() picks it
+         * up whenever the first real edge does happen. */
+    }
+#endif
 #endif
 
 #if APP_ENABLE_DISPLAY

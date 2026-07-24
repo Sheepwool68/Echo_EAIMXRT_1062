@@ -18,6 +18,7 @@ pin_labels:
 - {pin_num: A11, pin_signal: GPIO_B1_00, label: 'LCDIF_D12/J49[A9]', identifier: LCDIF_D12;USB_DTR}
 - {pin_num: D13, pin_signal: GPIO_B1_12, label: 'SD_CD_SW/J22[9]', identifier: SD_CD_SW;LPUART5;UART5_TXD}
 - {pin_num: D14, pin_signal: GPIO_B1_13, label: 'WDOG_B/U27[3]', identifier: WDOG_B;UART5_RXD}
+- {pin_num: H10, pin_signal: GPIO_AD_B0_01, label: 'USB_OTG1_ID/J48[4]/BT_WAKE_B_3V3/J8[20]/DC_INT/J23[3]', identifier: NRF_READY}
 - {pin_num: M11, pin_signal: GPIO_AD_B0_02, label: 'USB_OTG1_PWR/J17[2]/U30[A1]/LCD_RST/J49[B2]/DC_RESET/J23[7]/U9[5]', identifier: PPS}
 - {pin_num: G11, pin_signal: GPIO_AD_B0_03, label: 'USB_OTG1_OC/J17[1]/U30[A2]/DC_GPIO2/J23[22]/U10[19]', identifier: Timepulse;TIMEPULSE}
 - {pin_num: F11, pin_signal: GPIO_AD_B0_04, label: 'DC_I2S2_TX_SYNC/J19[9]/BOOT_MODE[0]', identifier: DC_I2S2_TX_SYNC;SPI_CS2}
@@ -50,10 +51,10 @@ pin_labels:
 #include "pin_mux.h"
 
 /* FUNCTION ************************************************************************************************************
- *
+ * 
  * Function Name : BOARD_InitBootPins
  * Description   : Calls initialization functions.
- *
+ * 
  * END ****************************************************************************************************************/
 void BOARD_InitBootPins(void) {
     BOARD_InitPins();
@@ -100,18 +101,27 @@ BOARD_InitPins:
     pull_keeper_select: Keeper, speed: MHZ_200}
   - {pin_num: E3, peripheral: GPIO4, signal: 'gpio_io, 00', pin_signal: GPIO_EMC_00, identifier: USB_STATUS, direction: INPUT}
   - {pin_num: A11, peripheral: GPIO2, signal: 'gpio_io, 16', pin_signal: GPIO_B1_00, identifier: USB_DTR, direction: OUTPUT}
-  - {pin_num: J1, peripheral: GPIO3, signal: 'gpio_io, 14', pin_signal: GPIO_SD_B0_02, identifier: NRF_READY, direction: INPUT, software_input_on: Enable, pull_keeper_select: Pull}
+  - {pin_num: H10, peripheral: GPIO1, signal: 'gpio_io, 01', pin_signal: GPIO_AD_B0_01, direction: INPUT, software_input_on: Enable, pull_keeper_select: Pull}
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS ***********
  */
 
 /* FUNCTION ************************************************************************************************************
  *
  * Function Name : BOARD_InitPins
- * Description   :
+ * Description   : 
  *
  * END ****************************************************************************************************************/
 void BOARD_InitPins(void) {
-  CLOCK_EnableClock(kCLOCK_Iomuxc);
+  CLOCK_EnableClock(kCLOCK_Iomuxc);           
+
+  /* GPIO configuration of NRF_READY on GPIO_AD_B0_01 (pin H10) */
+  gpio_pin_config_t NRF_READY_config = {
+      .direction = kGPIO_DigitalInput,
+      .outputLogic = 0U,
+      .interruptMode = kGPIO_NoIntmode
+  };
+  /* Initialize GPIO functionality on GPIO_AD_B0_01 (pin H10) */
+  GPIO_PinInit(GPIO1, 1U, &NRF_READY_config);
 
   /* GPIO configuration of PPS on GPIO_AD_B0_02 (pin M11) */
   gpio_pin_config_t PPS_config = {
@@ -218,15 +228,6 @@ void BOARD_InitPins(void) {
   /* Initialize GPIO functionality on GPIO_SD_B1_04 (pin P2) */
   GPIO_PinInit(GPIO3, 4U, &BUTTON_LED_config);
 
-  /* GPIO configuration of NRF_READY on GPIO_SD_B0_02 (pin J1) */
-  gpio_pin_config_t NRF_READY_config = {
-      .direction = kGPIO_DigitalInput,
-      .outputLogic = 0U,
-      .interruptMode = kGPIO_NoIntmode
-  };
-  /* Initialize GPIO functionality on GPIO_SD_B0_02 (pin J1) */
-  GPIO_PinInit(GPIO3, 14U, &NRF_READY_config);
-
   /* GPIO configuration of READER_SHUTDOWN on GPIO_SD_B0_03 (pin K1) */
   gpio_pin_config_t READER_SHUTDOWN_config = {
       .direction = kGPIO_DigitalOutput,
@@ -254,69 +255,69 @@ void BOARD_InitPins(void) {
   /* Initialize GPIO functionality on GPIO_EMC_00 (pin E3) */
   GPIO_PinInit(GPIO4, 0U, &USB_STATUS_config);
 
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_02_GPIO1_IO02, 1U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_03_GPIO1_IO03, 1U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_04_GPIO1_IO04, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_12_LPUART1_TX, 1U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_13_LPUART1_RX, 1U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_00_LPI2C1_SCL, 1U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_01_LPI2C1_SDA, 1U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_02_LPUART2_TX, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_03_LPUART2_RX, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_04_GPIO1_IO20, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_05_GPIO1_IO21, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_06_GPIO1_IO22, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_07_GPIO1_IO23, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_08_GPIO1_IO24, 1U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_10_LPUART8_TX, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_11_LPUART8_RX, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_12_GPIO1_IO28, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_13_LPSPI3_SDI, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_14_LPSPI3_SDO, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_01_GPIO1_IO01, 1U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_02_GPIO1_IO02, 1U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_03_GPIO1_IO03, 1U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_04_GPIO1_IO04, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_12_LPUART1_TX, 1U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_13_LPUART1_RX, 1U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_00_LPI2C1_SCL, 1U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_01_LPI2C1_SDA, 1U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_02_LPUART2_TX, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_03_LPUART2_RX, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_04_GPIO1_IO20, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_05_GPIO1_IO21, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_06_GPIO1_IO22, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_07_GPIO1_IO23, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_08_GPIO1_IO24, 1U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_10_LPUART8_TX, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_11_LPUART8_RX, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_12_GPIO1_IO28, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_13_LPSPI3_SDI, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_14_LPSPI3_SDO, 0U); 
 #if FSL_IOMUXC_DRIVER_VERSION >= MAKE_VERSION(2, 0, 4)
-  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_15_LPSPI3_SCK, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_15_LPSPI3_SCK, 0U); 
 #endif
-  IOMUXC_SetPinMux(IOMUXC_GPIO_B1_00_GPIO2_IO16, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_B1_12_LPUART5_TX, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_B1_13_LPUART5_RX, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_EMC_00_GPIO4_IO00, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B0_02_GPIO3_IO14, 1U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B0_03_GPIO3_IO15, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B0_05_GPIO3_IO17, 0U);
-  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B1_04_GPIO3_IO04, 0U);
+  IOMUXC_SetPinMux(IOMUXC_GPIO_B1_00_GPIO2_IO16, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_B1_12_LPUART5_TX, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_B1_13_LPUART5_RX, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_EMC_00_GPIO4_IO00, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B0_03_GPIO3_IO15, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B0_05_GPIO3_IO17, 0U); 
+  IOMUXC_SetPinMux(IOMUXC_GPIO_SD_B1_04_GPIO3_IO04, 0U); 
   IOMUXC_GPR->GPR26 = ((IOMUXC_GPR->GPR26 &
-    (~(BOARD_INITPINS_IOMUXC_GPR_GPR26_GPIO_MUX1_GPIO_SEL_MASK)))
-      | IOMUXC_GPR_GPR26_GPIO_MUX1_GPIO_SEL(0x00U)
+    (~(BOARD_INITPINS_IOMUXC_GPR_GPR26_GPIO_MUX1_GPIO_SEL_MASK))) 
+      | IOMUXC_GPR_GPR26_GPIO_MUX1_GPIO_SEL(0x00U) 
     );
   IOMUXC_GPR->GPR27 = ((IOMUXC_GPR->GPR27 &
-    (~(BOARD_INITPINS_IOMUXC_GPR_GPR27_GPIO_MUX2_GPIO_SEL_MASK)))
-      | IOMUXC_GPR_GPR27_GPIO_MUX2_GPIO_SEL(0x00U)
+    (~(BOARD_INITPINS_IOMUXC_GPR_GPR27_GPIO_MUX2_GPIO_SEL_MASK))) 
+      | IOMUXC_GPR_GPR27_GPIO_MUX2_GPIO_SEL(0x00U) 
     );
   IOMUXC_GPR->GPR28 = ((IOMUXC_GPR->GPR28 &
-    (~(BOARD_INITPINS_IOMUXC_GPR_GPR28_GPIO_MUX3_GPIO_SEL_MASK)))
-      | IOMUXC_GPR_GPR28_GPIO_MUX3_GPIO_SEL(0x00U)
+    (~(BOARD_INITPINS_IOMUXC_GPR_GPR28_GPIO_MUX3_GPIO_SEL_MASK))) 
+      | IOMUXC_GPR_GPR28_GPIO_MUX3_GPIO_SEL(0x00U) 
     );
   IOMUXC_GPR->GPR29 = ((IOMUXC_GPR->GPR29 &
-    (~(BOARD_INITPINS_IOMUXC_GPR_GPR29_GPIO_MUX4_GPIO_SEL_MASK)))
-      | IOMUXC_GPR_GPR29_GPIO_MUX4_GPIO_SEL(0x00U)
+    (~(BOARD_INITPINS_IOMUXC_GPR_GPR29_GPIO_MUX4_GPIO_SEL_MASK))) 
+      | IOMUXC_GPR_GPR29_GPIO_MUX4_GPIO_SEL(0x00U) 
     );
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_02_GPIO1_IO02, 0x20B1U);
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_03_GPIO1_IO03, 0x20B0U);
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_04_GPIO1_IO04, 0x1079U);
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_13_LPUART1_RX, 0x10B0U);
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_00_LPI2C1_SCL, 0xE871U);
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_01_LPI2C1_SDA, 0xE871U);
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_06_GPIO1_IO22, 0xB0U);
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_07_GPIO1_IO23, 0x10F0U);
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_08_GPIO1_IO24, 0xA0B0U);
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_12_GPIO1_IO28, 0x1079U);
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_13_LPSPI3_SDI, 0x0110B0U);
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_14_LPSPI3_SDO, 0x1079U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_01_GPIO1_IO01, 0x30B0U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_02_GPIO1_IO02, 0x20B1U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_03_GPIO1_IO03, 0x20B0U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_04_GPIO1_IO04, 0x1079U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_13_LPUART1_RX, 0x10B0U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_00_LPI2C1_SCL, 0xE871U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_01_LPI2C1_SDA, 0xE871U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_06_GPIO1_IO22, 0xB0U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_07_GPIO1_IO23, 0x10F0U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_08_GPIO1_IO24, 0xA0B0U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_12_GPIO1_IO28, 0x1079U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_13_LPSPI3_SDI, 0x0110B0U); 
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_14_LPSPI3_SDO, 0x1079U); 
 #if FSL_IOMUXC_DRIVER_VERSION >= MAKE_VERSION(2, 0, 4)
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_15_LPSPI3_SCK, 0x1079U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_15_LPSPI3_SCK, 0x1079U); 
 #endif
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_SD_B0_02_GPIO3_IO14, 0x30B0U);
-  IOMUXC_SetPinConfig(IOMUXC_GPIO_SD_B1_04_GPIO3_IO04, 0xB0U);
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_SD_B1_04_GPIO3_IO04, 0xB0U); 
 }
 /***********************************************************************************************************************
  * EOF

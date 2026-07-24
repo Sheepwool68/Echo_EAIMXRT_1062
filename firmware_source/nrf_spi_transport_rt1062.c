@@ -90,16 +90,23 @@
 #define NRF_CS_GPIO             GPIO1
 #define NRF_CS_PIN              28u
 
-/* CORRECTED 2026-07-23 -- was wired to GPIO_SD_B1_02 (GPIO3 pin 2) in
- * software the whole time; the actual physical trace routes to
- * GPIO_SD_B0_02 = GPIO3 pin 14 (confirmed directly against
- * fsl_iomuxc.h's IOMUXC_GPIO_SD_B0_02_GPIO3_IO14 macro, not guessed).
- * This was the real root cause of NRF_READY never being seen HIGH by
- * RT1062 despite the nRF confirmed (via Segger) actively driving its
- * own READY pin high -- RT1062 was reading a completely different,
- * unconnected pin the entire time. Not part of the SPI bus itself. */
-#define NRF_READY_GPIO          GPIO3
-#define NRF_READY_PIN           14u
+/* MOVED 2026-07-23 to GPIO_AD_B0_01 = GPIO1 pin 1 (SODIMM pin 61),
+ * confirmed against fsl_iomuxc.h's IOMUXC_GPIO_AD_B0_01_GPIO1_IO01
+ * macro. History: was originally wired in software to GPIO_SD_B1_02
+ * (GPIO3 pin 2) -- wrong pin entirely; corrected to GPIO_SD_B0_02
+ * (GPIO3 pin 14) to match the real physical trace, but that pin turned
+ * out to sit in the EA OEM module's separate NVCC_SD I/O power domain
+ * (SODIMM pin 85 SD_VCC), which is NOT the always-on NVCC_GPIO/VIN 3.3V
+ * rail every other pin here uses. With NVCC_SD unpowered, that whole
+ * GPIO_SD_B0 bank's pad buffers read stuck-high in DR/PSR while the
+ * physical pin sat at 0V -- confirmed by a raw-register dump (PSR bit
+ * 14 set, scope showed 0V) alongside the EA OEM datasheet's own pin
+ * table (pin 81 SD_D0, powered by NVCC_SD). Rather than power a
+ * separate rail, the signal was moved to GPIO_AD_B0_01, a free pin in
+ * the always-on NVCC_GPIO domain (requires moving the physical trace
+ * from SODIMM pin 81 to pin 61). Not part of the SPI bus itself. */
+#define NRF_READY_GPIO          GPIO1
+#define NRF_READY_PIN           1u
 
 /* -------------------------------------------------------------------
  * Static state (single instance; extend to a context struct if you
@@ -193,13 +200,8 @@ static int rt1062_transfer(void *ctx, const uint8_t *tx, uint8_t *rx, size_t len
      * outside the LPSPI peripheral now via cs_assert()/cs_deassert(). */
     xfer.configFlags = kLPSPI_MasterPcsContinuous;
 
-    /* REMOVED FOR TEST, 2026-07-23, per explicit instruction -- isolating
-     * whether the per-transfer LPSPI_Enable(false)->TCR rewrite->
-     * LPSPI_Enable(true) cycle itself (previously bracketing every nRF
-     * transfer to get Mode 1) was glitching the shared bus while CS was
-     * already asserted. Bus is now set statically to Mode 1 in
-     * board/peripherals.c for this test (GPS also disabled), so no
-     * per-transfer switch is needed -- this just transfers directly. */
+    /* Bus statically at Mode 1, 1MHz (board/peripherals.c) -- no
+     * per-transfer switch, transfers directly. */
     status = LPSPI_MasterTransferBlocking(hw->base, &xfer);
 
     return (status == kStatus_Success) ? 0 : -1;

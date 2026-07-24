@@ -1652,30 +1652,63 @@ static void process_nrf_spi(app_context_t *app)
          * instead of via PRINTF. */
         static int s_ready_was_high = -1; /* -1 = "never read yet", forces the first call to always print */
         int ready_now = app->nrf_transport.read_ready_line(app->nrf_transport.hw_ctx);
+        /* CORRECTED 2026-07-23, per explicit clarification -- READY
+         * sitting HIGH the moment the main loop starts is expected,
+         * by-design nRF behavior (its SPIS is active and DATA_READY set
+         * from very early in its own boot, well before app_init() ever
+         * finishes) -- not a signal RT1062 should act on. The old
+         * condition (s_ready_was_high != 1) treated the very first-ever
+         * read as a rising edge whenever it happened to read HIGH,
+         * which is exactly this boot-time leftover state, not a real
+         * new event. Now the first-ever call only seeds the baseline
+         * (whatever it reads) and never counts as a trigger -- only a
+         * genuine LOW->HIGH transition observed AFTER that baseline is
+         * established counts as real. */
+        int rising_edge = (ready_now == 1) && (s_ready_was_high == 0);
+
         if (ready_now != s_ready_was_high) {
             debug_printf("NRF_READY: %s at t=%lu ms\r\n",
                    ready_now ? "went HIGH" : "went LOW",
                    (unsigned long)systick_ms_now());
         }
         s_ready_was_high = ready_now;
+
+        /* EDGE-GATED POLL, added 2026-07-23, per explicit instruction --
+         * was level-triggered: any pass where read_ready_line() reads
+         * high called nrf_spi_poll() (cmd 0x01), with nothing stopping
+         * it from firing again on the very next pass if READY was still
+         * (or again) high, since this function runs unthrottled on
+         * every main-loop iteration. Confirmed on real hardware: this
+         * produced a self-sustaining loop -- RT1062 polling an empty
+         * nRF (0xBB, no data) over and over purely because the level
+         * read high, correlated with NRF_READY then rapidly
+         * oscillating HIGH/LOW every few ms. Now only polls on a
+         * genuine LOW->HIGH transition; won't poll again until READY
+         * has gone back low first. The retrieve phase (state==2, below)
+         * is deliberately NOT changed -- it already knows a real record
+         * is pending from a prior successful poll, so it doesn't need
+         * to wait for a fresh edge to go fetch it. */
+        if (app->spi_record_state == 1) {
+            if (rising_edge) {
+                uint8_t count = 0, record_type = 0;
+                nrf_spi_status_t st = nrf_spi_poll(&app->nrf_transport, &count, &record_type);
+
+                if (st == NRF_SPI_OK && count > 0) {
+                    app->nrf_pending_record_count = count;
+                    app->nrf_pending_record_type = record_type;
+                    app->spi_record_state = 2; /* was the original's transition
+                        to the retrieve phase on a successful, nonzero poll */
+                }
+                /* else: stay in state 1 -- was the original's implicit
+                 * behavior of leaving spi_record_state untouched on an
+                 * empty poll or error, trying again next iteration */
+            }
+            return;
+        }
     }
 
     if (app->nrf_transport.read_ready_line(app->nrf_transport.hw_ctx)) {
-        if (app->spi_record_state == 1) {
-            uint8_t count = 0, record_type = 0;
-            nrf_spi_status_t st = nrf_spi_poll(&app->nrf_transport, &count, &record_type);
-
-            if (st == NRF_SPI_OK && count > 0) {
-                app->nrf_pending_record_count = count;
-                app->nrf_pending_record_type = record_type;
-                app->spi_record_state = 2; /* was the original's transition
-                    to the retrieve phase on a successful, nonzero poll */
-            }
-            /* else: stay in state 1 -- was the original's implicit
-             * behavior of leaving spi_record_state untouched on an
-             * empty poll or error, trying again next iteration */
-
-        } else { /* spi_record_state == 2: retrieve */
+        if (app->spi_record_state == 2) { /* retrieve */
             nrf_record_t records[NRF_SPI_MAX_RECORDS];
             int n = 0;
             int is_live = (app->nrf_pending_record_type == NRF_RECORD_TYPE_LIVE);

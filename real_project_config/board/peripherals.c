@@ -122,6 +122,7 @@ instance:
       - 6: []
       - 7: []
       - 8: []
+      - 9: []
     - gpioPinsConfig:
       - 0:
         - pin_selection: 'gpio_io.02'
@@ -174,6 +175,7 @@ hal_gpio_pin_config_t createAdapterGpioPinConfig(GPIO_Type *port, uint8_t pin, h
   
   return temp;
 };
+GPIO_HANDLE_DEFINE(BOARD_INITPINS_NRF_READY_handle);
 GPIO_HANDLE_DEFINE(GPIO1_PPS_handle);
 GPIO_HANDLE_DEFINE(GPIO1_TIMEPULSE_handle);
 GPIO_HANDLE_DEFINE(BOARD_INITPINS_SPI_CS2_handle);
@@ -189,6 +191,10 @@ static void GPIO1_init(void) {
   static hal_gpio_pin_config_t gpioPinConfig;
   hal_gpio_status_t status;
   (void)status; // suppress warning in the run configuration
+  /* gpio_io, 01 signal initialization */
+  gpioPinConfig = createAdapterGpioPinConfig(BOARD_INITPINS_NRF_READY_PORT, BOARD_INITPINS_NRF_READY_PIN, BOARD_INITPINS_NRF_READY_PIN_DIRECTION, BOARD_INITPINS_NRF_READY_PIN_LEVEL);
+  status = HAL_GpioInit(BOARD_INITPINS_NRF_READY_handle, &gpioPinConfig);
+  assert(status == kStatus_HAL_GpioSuccess);
   /* gpio_io, 02 signal initialization */
   gpioPinConfig = createAdapterGpioPinConfig(GPIO1_PPS_PORT, GPIO1_PPS_PIN, GPIO1_PPS_PIN_DIRECTION, GPIO1_PPS_PIN_LEVEL);
   status = HAL_GpioInit(GPIO1_PPS_handle, &gpioPinConfig);
